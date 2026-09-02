@@ -1,7 +1,6 @@
 # ===== CORE DEPENDENCIES =====
 streamlit==1.37.1
-# ===== SCHEDULING & TIMEZONE =====
-APScheduler==3.10.4
+# ===== ZEITZONEN =====
 pytz==2024.1
 python-dateutil==2.9.0.post0
 # ===== HTTP & API =====
@@ -16,3 +15,6 @@ google-cloud-firestore==2.19.0
 firebase-admin==6.5.0
 # ===== EXCEL EXPORT =====
 openpyxl==3.1.5
+
+# ===== TESTS (nur lokal / CI) =====
+pytest==8.3.3

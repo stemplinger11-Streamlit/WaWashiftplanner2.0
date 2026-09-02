@@ -1,14 +1,15 @@
 """
-Wasserwacht Dienstplan+ V8.1 - Production Ready
-Alle Features | E-Mail/SMS Fix | User-Registrierung | Vollständig
+Wasserwacht Dienstplan+ - Streamlit-App mit Firestore-Anbindung.
+
+Einstiegspunkt fuer Streamlit Community Cloud. Fachliche Regeln liegen in
+core_rules.py, damit sie ohne App und ohne Datenbank testbar sind.
 """
 import streamlit as st
 import hashlib
 import io
 import json
 import zipfile
-import calendar as cal_module
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
@@ -16,26 +17,20 @@ from email import encoders
 import email.utils
 import smtplib
 import pytz
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
 from twilio.rest import Client
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 from google.cloud import firestore
 from google.oauth2 import service_account
 from collections import Counter
 
+# Fachliche Regeln (Feiertage, Saisonpause, Stornofrist) liegen in
+# core_rules.py und sind durch test_core_rules.py abgedeckt.
 import core_rules as rules
 from core_rules import (
     DEFAULT_PAUSE_START,
     DEFAULT_PAUSE_END,
     DEFAULT_CANCEL_DEADLINE_HOURS,
-    bavaria_holidays,
-    holiday_name,
-    is_holiday,
-    slot_start_datetime,
-    to_date_str,
 )
 
 # ===== PAGE CONFIG =====
@@ -47,7 +42,7 @@ st.set_page_config(
 )
 
 # ===== KONFIGURATION =====
-VERSION = "8.1 - Production Ready"
+VERSION = "9.0"
 TIMEZONE_STR = "Europe/Berlin"
 TZ = pytz.timezone(TIMEZONE_STR)
 
@@ -133,9 +128,6 @@ def get_cancel_deadline_hours():
 
 def is_in_pause(d):
     return rules.is_in_pause(d, *get_pause_range())
-
-# Rueckwaertskompatibler Alias - alter Name aus V8.1
-is_summer = is_in_pause
 
 def is_blocked(d):
     return rules.is_blocked(d, *get_pause_range())
@@ -998,7 +990,7 @@ class Mailer:
             self.server = self.port = self.user = self.pw = self.admin_receiver = ""
             self.fromname = "Dienstplan"
     
-    def send(self, to, subject, body, attachments=None):
+    def send(self, to, subject, body, attachments=None, html=False):
         """
         Sendet eine E-Mail mit detailliertem Error-Handling
         Returns: (success: bool, error_message: str)
@@ -1015,7 +1007,7 @@ class Mailer:
             msg['To'] = to
             msg['Subject'] = subject
             msg['Date'] = email.utils.formatdate(localtime=True)
-            msg.attach(MIMEText(body, 'plain'))
+            msg.attach(MIMEText(body, 'html' if html else 'plain', 'utf-8'))
             
             if attachments:
                 for filename, data in attachments:
@@ -1836,15 +1828,21 @@ def profil_page():
                 help="Ihr vollständiger Name"
             )
             
-            # E-Mail (editierbar mit Warnung)
+            # E-Mail: nicht selbst aenderbar.
+            # Buchungen sind ueber die E-Mail-Adresse mit dem Konto verknuepft.
+            # Eine Aenderung hier trennte bisher stillschweigend alle
+            # bisherigen Buchungen vom Nutzer.
             st.markdown("**E-Mail-Adresse**")
             email = st.text_input(
                 "E-Mail",
                 value=user.get('email', ''),
-                help="Ihre E-Mail-Adresse für Login und Benachrichtigungen",
+                disabled=True,
+                help="Die E-Mail-Adresse ist mit deinen Buchungen verknüpft",
                 label_visibility="collapsed"
             )
-            st.warning("⚠️ Wichtig: Prüfen Sie die E-Mail-Adresse sorgfältig! Sie benötigen sie für den Login.")
+            st.caption("ℹ️ Deine E-Mail-Adresse ist zugleich dein Login und mit deinen "
+                       "Buchungen verknüpft. Für eine Änderung wende dich bitte an "
+                       "einen Administrator.")
             
             # Telefon (editierbar mit Auto-Format)
             st.markdown("**Telefonnummer**")
@@ -1882,37 +1880,27 @@ def profil_page():
             submit = st.form_submit_button("💾 Änderungen speichern", use_container_width=True, type="primary")
             
             if submit:
-                # Validierung
-                if not name or not email:
-                    st.error("❌ Name und E-Mail sind Pflichtfelder!")
+                # Validierung (E-Mail ist nicht editierbar, daher nicht geprueft)
+                if not name:
+                    st.error("❌ Name ist ein Pflichtfeld!")
                 elif len(name) < 2:
                     st.error("❌ Name muss mindestens 2 Zeichen haben")
-                elif '@' not in email or '.' not in email:
-                    st.error("❌ Ungültige E-Mail-Adresse")
                 else:
-                    # Prüfe ob E-Mail bereits von anderem User verwendet wird
-                    existing_user = ww_db.get_user(email)
-                    if existing_user and existing_user.get('id') != user['id']:
-                        st.error(f"❌ E-Mail-Adresse '{email}' wird bereits verwendet!")
+                    success = ww_db.update_user(
+                        user['id'],
+                        name=name,
+                        phone=phone
+                    )
+
+                    if success:
+                        # Session aktualisieren
+                        st.session_state.user['name'] = name
+                        st.session_state.user['phone'] = phone
+
+                        st.success("✅ Profil erfolgreich aktualisiert!")
+                        st.rerun()
                     else:
-                        # Speichern
-                        success = ww_db.update_user(
-                            user['id'],
-                            name=name,
-                            email=email,
-                            phone=phone
-                        )
-                        
-                        if success:
-                            # Session aktualisieren
-                            st.session_state.user['name'] = name
-                            st.session_state.user['email'] = email
-                            st.session_state.user['phone'] = phone
-                            
-                            st.success("✅ Profil erfolgreich aktualisiert!")
-                            st.rerun()
-                        else:
-                            st.error("❌ Fehler beim Speichern")
+                        st.error("❌ Fehler beim Speichern")
     
     # ===== TAB 2: BENACHRICHTIGUNGEN =====
     with tab2:
@@ -1972,7 +1960,11 @@ def profil_page():
                     email_notifications_reminder=email_reminder,
                     email_notifications_cancellation=email_cancellation,
                     sms_notifications_booking=sms_booking,
-                    sms_notifications_reminder=sms_reminder
+                    sms_notifications_reminder=sms_reminder,
+                    # Altfelder mitschreiben, damit beide Schemata konsistent
+                    # bleiben, solange Bestandsdaten sie noch enthalten
+                    email_notifications=email_booking,
+                    sms_notifications=sms_booking
                 )
                 
                 if success:
@@ -2593,7 +2585,101 @@ Details:
     # ===== TAB 5: EINSTELLUNGEN (wie gehabt) =====
     with tab5:
         st.subheader("⚙️ Systemeinstellungen")
-        
+
+        # ===== SAISONPAUSE =====
+        st.markdown("### 🏖️ Saisonpause")
+        st.caption("In diesem Zeitraum sind keine Buchungen möglich. Gilt jedes Jahr erneut.")
+
+        pause_start, pause_end = get_pause_range()
+        try:
+            start_default = datetime.strptime(f"2000-{pause_start}", "%Y-%m-%d").date()
+            end_default = datetime.strptime(f"2000-{pause_end}", "%Y-%m-%d").date()
+        except ValueError:
+            start_default = datetime.strptime(f"2000-{DEFAULT_PAUSE_START}", "%Y-%m-%d").date()
+            end_default = datetime.strptime(f"2000-{DEFAULT_PAUSE_END}", "%Y-%m-%d").date()
+
+        with st.form("saisonpause_form"):
+            col_p1, col_p2 = st.columns(2)
+            with col_p1:
+                neu_start = st.date_input("Pause beginnt am", value=start_default,
+                                          format="DD.MM.YYYY",
+                                          help="Nur Tag und Monat sind relevant")
+            with col_p2:
+                neu_end = st.date_input("Pause endet am (einschließlich)", value=end_default,
+                                        format="DD.MM.YYYY",
+                                        help="Nur Tag und Monat sind relevant")
+
+            st.caption("💡 Ein Zeitraum über den Jahreswechsel (z. B. 01.11. – 31.03.) "
+                       "wird unterstützt.")
+
+            if st.form_submit_button("💾 Saisonpause speichern", type="primary"):
+                s = neu_start.strftime("%m-%d")
+                e = neu_end.strftime("%m-%d")
+                ok = ww_db.set_setting('season_pause_start', s)
+                ok = ww_db.set_setting('season_pause_end', e) and ok
+                if ok:
+                    st.success(f"✅ Saisonpause gespeichert: {neu_start.strftime('%d.%m.')} "
+                               f"bis {neu_end.strftime('%d.%m.')}")
+                    st.rerun()
+                else:
+                    st.error("❌ Fehler beim Speichern")
+
+        # Vorschau: welche der naechsten Slots waeren gesperrt?
+        with st.expander("👁️ Vorschau: gesperrte Termine der nächsten 8 Wochen"):
+            heute = datetime.now().date()
+            gesperrt = []
+            for w in range(8):
+                ws = week_start(heute + timedelta(days=7 * w))
+                for sc in WEEKLY_SLOTS:
+                    sd_ = slot_date(ws, sc['day'])
+                    if datetime.strptime(sd_, '%Y-%m-%d').date() < heute:
+                        continue
+                    grund = block_reason(sd_)
+                    if grund:
+                        gesperrt.append(f"- **{fmt_de(sd_)}** ({sc['day_name']}) – {grund}")
+            if gesperrt:
+                st.markdown("\n".join(gesperrt))
+            else:
+                st.success("Keine Sperrungen in den nächsten 8 Wochen.")
+
+        st.divider()
+
+        # ===== STORNOFRIST =====
+        st.markdown("### ⏱️ Stornofrist")
+        with st.form("stornofrist_form"):
+            aktuelle_frist = get_cancel_deadline_hours()
+            neue_frist = st.number_input(
+                "Stunden vor Dienstbeginn, bis zu denen Nutzer selbst stornieren dürfen",
+                min_value=0, max_value=336, value=aktuelle_frist, step=1
+            )
+            st.caption("💡 Administratoren sind von dieser Frist ausgenommen und können "
+                       "jederzeit stornieren und umbuchen – auch am Diensttag selbst.")
+            if st.form_submit_button("💾 Frist speichern", type="primary"):
+                if ww_db.set_setting('cancel_deadline_hours', str(int(neue_frist))):
+                    st.success(f"✅ Stornofrist gespeichert: {int(neue_frist)} Stunden")
+                    st.rerun()
+                else:
+                    st.error("❌ Fehler beim Speichern")
+
+        st.divider()
+
+        # ===== ORGANISATION =====
+        st.markdown("### 🏢 Organisation")
+        with st.form("org_form"):
+            org_name = st.text_input("Name der Organisation",
+                                     value=ww_db.get_setting('org_name', 'Wasserwacht'),
+                                     help="Wird in allen E-Mails und SMS als {org_name} eingesetzt")
+            if st.form_submit_button("💾 Speichern", type="primary"):
+                if ww_db.set_setting('org_name', org_name):
+                    st.success("✅ Gespeichert")
+                    st.rerun()
+                else:
+                    st.error("❌ Fehler beim Speichern")
+
+        st.divider()
+
+        # ===== DARSTELLUNG =====
+        st.markdown("### 🎨 Darstellung")
         dark = ww_db.get_setting('dark_mode', 'false') == 'true'
         new_dark = st.checkbox("Dark Mode (Global)", value=dark)
         if new_dark != dark:
@@ -2606,9 +2692,57 @@ def benutzer_page():
     st.title("👥 Benutzerverwaltung")
     
     users = ww_db.get_all_users()
-    
-    tab1, tab2 = st.tabs(["📋 Alle Benutzer", "➕ Neuer Benutzer"])
-    
+    pending = ww_db.get_pending_users()
+
+    # Ein zuletzt zurueckgesetztes Passwort ueberlebt den Rerun, damit der
+    # Admin es notieren kann - bisher wurde es sofort wieder weggeblendet.
+    shown_pw = st.session_state.pop('last_reset_password', None)
+    if shown_pw:
+        st.success(f"✅ Passwort für **{shown_pw['name']}** zurückgesetzt.")
+        if shown_pw['mail_ok']:
+            st.info(f"📧 E-Mail an {shown_pw['email']} gesendet.")
+        else:
+            st.error("❌ E-Mail-Versand fehlgeschlagen – bitte das Passwort manuell übergeben!")
+        st.code(shown_pw['password'], language=None)
+        st.caption("☝️ Bitte jetzt notieren – diese Anzeige erscheint nur einmal.")
+        st.divider()
+
+    tab_labels = ["📋 Alle Benutzer", "➕ Neuer Benutzer"]
+    if pending:
+        tab_labels.insert(0, f"⏳ Offene Freigaben ({len(pending)})")
+        tab_pending, tab1, tab2 = st.tabs(tab_labels)
+    else:
+        tab_pending = None
+        tab1, tab2 = st.tabs(tab_labels)
+
+    # ===== OFFENE FREIGABEN =====
+    if tab_pending is not None:
+        with tab_pending:
+            st.subheader("⏳ Registrierungen warten auf Freigabe")
+            st.caption("Diese Konten können sich erst nach der Freigabe anmelden.")
+
+            for u in pending:
+                col_a, col_b, col_c = st.columns([4, 1, 1])
+                with col_a:
+                    st.markdown(f"**{u.get('name', 'N/A')}**")
+                    st.caption(f"📧 {u.get('email', 'N/A')} | 📱 {u.get('phone') or '-'}")
+                with col_b:
+                    if st.button("✅ Freigeben", key=f"approve_{u['id']}",
+                                 use_container_width=True, type="primary"):
+                        if ww_db.approve_user(u['id']):
+                            mailer.send_account_approved(u.get('email'), u.get('name'))
+                            st.success(f"✅ {u.get('name')} freigegeben und benachrichtigt")
+                            st.rerun()
+                        else:
+                            st.error("❌ Freigabe fehlgeschlagen")
+                with col_c:
+                    if st.button("🗑️ Ablehnen", key=f"reject_{u['id']}",
+                                 use_container_width=True):
+                        if ww_db.delete_user(u['id']):
+                            st.success(f"Registrierung von {u.get('name')} abgelehnt")
+                            st.rerun()
+                st.divider()
+
     with tab1:
         st.markdown(f"**Gesamt:** {len(users)} Benutzer")
         
@@ -2648,31 +2782,46 @@ def benutzer_page():
                     st.metric("Buchungen", len(bookings))
                 
                 with col3:
-                    # Action Buttons - NEU: 4 Buttons inkl. Edit und PW-Reset
+                    # Schutz vor Selbst-Aussperrung: Der angemeldete Admin darf
+                    # sich nicht selbst deaktivieren oder loeschen, und der
+                    # letzte aktive Admin muss erhalten bleiben.
+                    is_self = u.get('email') == st.session_state.user.get('email')
+                    aktive_admins = len([a for a in users
+                                         if a.get('role') == 'admin' and a.get('active', True)])
+                    is_last_admin = u.get('role') == 'admin' and u.get('active', True) and aktive_admins <= 1
+                    lock_reason = ("eigenes Konto" if is_self
+                                   else "letzter aktiver Admin" if is_last_admin else None)
+
                     btn_col1, btn_col2, btn_col3, btn_col4 = st.columns(4)
-                    
+
                     with btn_col1:
                         if st.button("✏️", key=f"edit_{u['id']}", help="Bearbeiten"):
                             st.session_state[f'edit_user_{u["id"]}'] = True
                             st.rerun()
-                    
+
                     with btn_col2:
                         active = u.get('active', True)
                         toggle_label = "🔓" if not active else "🔒"
-                        toggle_help = "Aktivieren" if not active else "Deaktivieren"
-                        if st.button(toggle_label, key=f"toggle_{u['id']}", help=toggle_help):
+                        toggle_help = ("Aktivieren" if not active else "Deaktivieren")
+                        if lock_reason and active:
+                            st.button(toggle_label, key=f"toggle_{u['id']}", disabled=True,
+                                      help=f"Nicht möglich: {lock_reason}")
+                        elif st.button(toggle_label, key=f"toggle_{u['id']}", help=toggle_help):
                             ww_db.update_user(u['id'], active=not active)
                             st.success(f"✅ User {'aktiviert' if not active else 'deaktiviert'}")
                             st.rerun()
-                    
+
                     with btn_col3:
                         # NEU: Password Reset Button
                         if st.button("🔑", key=f"pwreset_{u['id']}", help="Passwort zurücksetzen"):
                             st.session_state[f'confirm_reset_{u["id"]}'] = True
                             st.rerun()
-                    
+
                     with btn_col4:
-                        if st.button("🗑️", key=f"del_{u['id']}", help="Löschen"):
+                        if lock_reason:
+                            st.button("🗑️", key=f"del_{u['id']}", disabled=True,
+                                      help=f"Nicht möglich: {lock_reason}")
+                        elif st.button("🗑️", key=f"del_{u['id']}", help="Löschen"):
                             st.session_state[f'confirm_delete_{u["id"]}'] = True
                             st.rerun()
                 
@@ -2692,23 +2841,22 @@ def benutzer_page():
                             if st.form_submit_button("✅ Ja, zurücksetzen", type="primary", use_container_width=True):
                                 # Trigger Password Reset
                                 success, new_pw = ww_db.trigger_password_reset(u['id'])
-                                
+
                                 if success and new_pw:
-                                    # Email senden
-                                    email_success, email_msg = mailer.send_password_reset(
+                                    email_success, _ = mailer.send_password_reset(
                                         u.get('email'),
                                         u.get('name'),
                                         new_pw
                                     )
-                                    
-                                    if email_success:
-                                        st.success(f"✅ Passwort zurückgesetzt! E-Mail an {u.get('email')} gesendet.")
-                                        st.info(f"🔑 **Neues Passwort (für Notfälle):** `{new_pw}`")
-                                        st.caption("☝️ Bitte notiere das Passwort, falls der User die E-Mail nicht erhält.")
-                                    else:
-                                        st.error(f"❌ Passwort zurückgesetzt, aber E-Mail-Versand fehlgeschlagen!")
-                                        st.warning(f"⚠️ **Bitte gib dem User manuell das Passwort:** `{new_pw}`")
-                                    
+                                    # Ergebnis ueber den Rerun hinweg merken -
+                                    # sonst wird die Anzeige des Passworts
+                                    # sofort wieder weggeblendet.
+                                    st.session_state['last_reset_password'] = {
+                                        'name': u.get('name'),
+                                        'email': u.get('email'),
+                                        'password': new_pw,
+                                        'mail_ok': email_success,
+                                    }
                                     del st.session_state[f'confirm_reset_{u["id"]}']
                                     st.rerun()
                                 else:
@@ -2779,11 +2927,19 @@ def benutzer_page():
                 elif len(new_pw) < 6:
                     st.error("❌ Passwort muss mindestens 6 Zeichen haben")
                 else:
-                    success, msg = ww_db.create_user(new_email, new_name, new_phone, new_pw, role=new_role)
+                    success, msg = ww_db.create_user(
+                        new_email, new_name, new_phone, new_pw, role=new_role
+                    )
                     if success:
-                        st.success(f"✅ {msg}")
+                        # Vom Admin angelegte Konten sind sofort aktiv
+                        mail_ok, _ = mailer.send_account_approved(new_email, new_name)
+                        st.success(f"✅ Benutzer {new_name} erstellt")
+                        if mail_ok:
+                            st.info(f"📧 Zugangsinfo an {new_email} gesendet")
+                        else:
+                            st.warning("⚠️ Benutzer angelegt, aber E-Mail-Versand "
+                                       "fehlgeschlagen – bitte Zugangsdaten manuell übergeben.")
                         st.balloons()
-                        st.rerun()
                     else:
                         st.error(f"❌ {msg}")
 
@@ -2795,63 +2951,98 @@ def export_page():
     
     with col1:
         st.subheader("📥 Daten exportieren")
-        
-        if st.button("📄 Buchungen exportieren (JSON)", use_container_width=True):
+        st.caption("Die Dateien werden direkt erzeugt – ein Klick genügt.")
+
+        # Die Downloads lagen bisher hinter einem st.button. Nach dem
+        # Herunterladen loest Streamlit einen Rerun aus, der Button ist dann
+        # wieder False und der Download-Button verschwand. Daher werden die
+        # Daten jetzt direkt geladen.
+        stamp = datetime.now().strftime('%Y%m%d')
+
+        try:
+            bookings_raw = []
+            for doc in db.collection('bookings').stream():
+                b = doc.to_dict()
+                b['id'] = doc.id
+                for key in b:
+                    if hasattr(b[key], 'strftime'):
+                        b[key] = b[key].strftime('%Y-%m-%d %H:%M:%S')
+                bookings_raw.append(b)
+
+            st.download_button(
+                f"📄 Buchungen als JSON ({len(bookings_raw)})",
+                json.dumps(bookings_raw, indent=2, ensure_ascii=False),
+                file_name=f"buchungen_{stamp}.json",
+                mime="application/json",
+                use_container_width=True
+            )
+        except Exception as e:
+            st.error(f"Buchungen konnten nicht geladen werden: {e}")
+            bookings_raw = []
+
+        try:
+            users = ww_db.get_all_users()
+            # Passwort-Hashes werden nicht exportiert
+            users_export = [{k: v for k, v in u.items() if k != 'password_hash'}
+                            for u in users]
+            for u in users_export:
+                for key in u:
+                    if hasattr(u[key], 'strftime'):
+                        u[key] = u[key].strftime('%Y-%m-%d %H:%M:%S')
+
+            st.download_button(
+                f"📄 Benutzer als JSON ({len(users_export)})",
+                json.dumps(users_export, indent=2, ensure_ascii=False),
+                file_name=f"benutzer_{stamp}.json",
+                mime="application/json",
+                use_container_width=True
+            )
+        except Exception as e:
+            st.error(f"Benutzer konnten nicht geladen werden: {e}")
+
+        confirmed = [b for b in bookings_raw if b.get('status') == 'confirmed']
+        if confirmed:
+            df_export = pd.DataFrame(confirmed)
+            st.download_button(
+                f"📊 Bestätigte Buchungen als CSV ({len(confirmed)})",
+                df_export.to_csv(index=False).encode('utf-8-sig'),
+                file_name=f"statistik_{stamp}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+
+            # Excel-Export - openpyxl war bislang als Abhaengigkeit
+            # eingetragen, wurde aber nirgends genutzt.
             try:
-                bookings = []
-                for doc in db.collection('bookings').stream():
-                    b = doc.to_dict()
-                    b['id'] = doc.id
-                    # Firestore Timestamps zu Strings
-                    for key in b:
-                        if hasattr(b[key], 'strftime'):
-                            b[key] = b[key].strftime('%Y-%m-%d %H:%M:%S')
-                    bookings.append(b)
-                
-                json_str = json.dumps(bookings, indent=2, ensure_ascii=False)
+                xlsx_buffer = io.BytesIO()
+                spalten = ['slot_date', 'slot_time', 'user_name', 'user_email',
+                           'user_phone', 'status']
+                df_xlsx = df_export.reindex(
+                    columns=[c for c in spalten if c in df_export.columns]
+                ).rename(columns={
+                    'slot_date': 'Datum', 'slot_time': 'Uhrzeit',
+                    'user_name': 'Name', 'user_email': 'E-Mail',
+                    'user_phone': 'Telefon', 'status': 'Status'
+                }).sort_values('Datum')
+
+                with pd.ExcelWriter(xlsx_buffer, engine='openpyxl') as writer:
+                    df_xlsx.to_excel(writer, index=False, sheet_name='Dienstplan')
+                    sheet = writer.sheets['Dienstplan']
+                    for spalte in sheet.columns:
+                        breite = max((len(str(z.value)) for z in spalte if z.value), default=10)
+                        sheet.column_dimensions[spalte[0].column_letter].width = min(breite + 3, 40)
+
                 st.download_button(
-                    "⬇️ Download Buchungen",
-                    json_str,
-                    file_name=f"buchungen_{datetime.now().strftime('%Y%m%d')}.json",
-                    mime="application/json"
+                    f"📗 Dienstplan als Excel ({len(confirmed)})",
+                    xlsx_buffer.getvalue(),
+                    file_name=f"dienstplan_{stamp}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
                 )
             except Exception as e:
-                st.error(f"Fehler: {e}")
-        
-        if st.button("📄 Benutzer exportieren (JSON)", use_container_width=True):
-            try:
-                users = ww_db.get_all_users()
-                # Passwörter entfernen
-                users_export = [{k: v for k, v in u.items() if k != 'password_hash'} for u in users]
-                json_str = json.dumps(users_export, indent=2, ensure_ascii=False)
-                st.download_button(
-                    "⬇️ Download Benutzer",
-                    json_str,
-                    file_name=f"benutzer_{datetime.now().strftime('%Y%m%d')}.json",
-                    mime="application/json"
-                )
-            except Exception as e:
-                st.error(f"Fehler: {e}")
-        
-        if st.button("📊 Statistik exportieren (CSV)", use_container_width=True):
-            try:
-                bookings = []
-                for doc in db.collection('bookings').where('status', '==', 'confirmed').stream():
-                    bookings.append(doc.to_dict())
-                
-                if bookings:
-                    df = pd.DataFrame(bookings)
-                    csv = df.to_csv(index=False)
-                    st.download_button(
-                        "⬇️ Download CSV",
-                        csv,
-                        file_name=f"statistik_{datetime.now().strftime('%Y%m%d')}.csv",
-                        mime="text/csv"
-                    )
-                else:
-                    st.info("Keine Daten vorhanden")
-            except Exception as e:
-                st.error(f"Fehler: {e}")
+                st.warning(f"Excel-Export nicht möglich: {e}")
+        else:
+            st.info("Noch keine bestätigten Buchungen vorhanden.")
     
     with col2:
         st.subheader("📧 E-Mail Backup")
@@ -2894,7 +3085,8 @@ def export_page():
                         mailer.admin_receiver,
                         subject,
                         body,
-                        attachments=[(f"backup_{datetime.now().strftime('%Y%m%d')}.zip", zip_buffer.getvalue())]
+                        attachments=[(f"backup_{datetime.now().strftime('%Y%m%d')}.zip", zip_buffer.getvalue())],
+                        html=True
                     )
                     
                     if success:
@@ -2995,6 +3187,8 @@ def handbuch_page():
 
 ### 📅 Schichten buchen
 
+0. **Konto**: Neue Konten muss ein Administrator freigeben, bevor die
+   erste Anmeldung möglich ist.
 1. **Kalender öffnen**: Gehen Sie zur Seite "📅 Kalender"
 2. **Woche auswählen**: Verwenden Sie die Pfeile ⬅️ ➡️ oder "Heute"
 3. **Schicht buchen**: Klicken Sie auf "📝 Buchen" bei einem verfügbaren Slot
@@ -3003,16 +3197,18 @@ def handbuch_page():
 ### 🚫 Blockierte Tage
 
 - **Feiertage**: An bayerischen Feiertagen sind keine Buchungen möglich
-- **Sommerpause**: Von Juni bis September pausiert der Dienst
+- **Saisonpause**: Im festgelegten Pausenzeitraum ruht der Dienst.
+  Den aktuellen Zeitraum pflegt der Admin unter Verwaltung → Einstellungen.
 
 ### 📋 Meine Buchungen
 
 - Sehen Sie alle Ihre zukünftigen und vergangenen Buchungen
-- Stornieren Sie Buchungen bis 24h vorher
+- Stornieren Sie Buchungen selbst bis **12 Stunden** vor Dienstbeginn.
+  Danach wenden Sie sich bitte an einen Admin – er kann jederzeit
+  stornieren und umbuchen.
 
 ### 📊 Statistik
 
-- Sehen Sie Ihre Dienst-Statistiken
 - Top-10 Helfer Ranking
 - Monatliche Übersichten
 
@@ -3020,16 +3216,17 @@ def handbuch_page():
 
 **Nur für Administratoren:**
 
-- **Verwaltung**: Alle Buchungen einsehen und verwalten
-- **Benutzer**: Benutzer erstellen, bearbeiten, löschen
+- **Verwaltung**: Alle Buchungen einsehen und verwalten,
+  Saisonpause und Stornofrist einstellen
+- **Benutzer**: Benutzer freigeben, erstellen, bearbeiten, löschen
 - **Export**: Daten exportieren als JSON/CSV
 - **Debug**: E-Mail und SMS testen
 - **Handbuch**: Dieses Handbuch bearbeiten
 
 ### 💡 Tipps
 
-- Aktivieren Sie E-Mail-Benachrichtigungen in Ihrem Profil
-- Sie erhalten Erinnerungen 24h vor Ihrem Dienst
+- Stellen Sie in Ihrem Profil ein, welche Benachrichtigungen Sie erhalten
+- Für SMS muss eine Telefonnummer im Profil hinterlegt sein
 - Bei Fragen kontaktieren Sie Ihren Administrator
 
 ### 🔧 Support
@@ -3241,18 +3438,18 @@ Bis morgen!
 Dein {org_name} Team 🌊"""
         },
         'email_welcome': {
-            'name': '✉️ E-Mail - Willkommen (nach Registrierung)',
+            'name': '✉️ E-Mail - Registrierung eingegangen',
             'type': 'email',
-            'default_subject': 'Willkommen bei {org_name}!',
+            'default_subject': 'Deine Registrierung bei {org_name}',
             'default_body': """Hallo {name},
 
-herzlich willkommen bei {org_name}! 🌊
+danke für deine Registrierung bei {org_name}! 🌊
 
-Dein Account wurde erfolgreich erstellt.
-Du kannst dich jetzt anmelden und Schichten buchen.
+Dein Konto wurde angelegt und muss noch von einem Administrator
+freigegeben werden. Sobald das erledigt ist, erhältst du eine
+weitere E-Mail und kannst dich anmelden.
 
-📧 E-Mail: {email}
-🌐 Dashboard: [LINK ZUR APP]
+📧 Deine E-Mail: {email}
 
 Bei Fragen erreichst du uns unter {org_email}.
 
@@ -3299,6 +3496,34 @@ Dein {org_name} Team 🌊
 
 ---
 Gesendet am {current_date}"""
+        },
+        'email_approved': {
+            'name': '✉️ E-Mail - Konto freigegeben',
+            'type': 'email',
+            'default_subject': '✅ Dein Zugang ist freigeschaltet - {org_name}',
+            'default_body': """Hallo {name},
+
+dein Konto wurde freigegeben. Du kannst dich ab sofort anmelden
+und Schichten buchen. 🌊
+
+📧 Deine E-Mail: {email}
+
+Viele Grüße,
+Dein {org_name} Team"""
+        },
+        'email_registration_notice': {
+            'name': '✉️ E-Mail - Admin: neue Registrierung',
+            'type': 'email',
+            'default_subject': '👤 Neue Registrierung wartet auf Freigabe: {name}',
+            'default_body': """Eine neue Registrierung wartet auf Freigabe:
+
+👤 Name: {name}
+📧 E-Mail: {email}
+📱 Telefon: {phone}
+
+Registriert am: {current_date}
+
+Freigeben unter: Benutzer -> Offene Freigaben"""
         },
         'sms_booking': {
             'name': '📱 SMS - Buchungsbestätigung',
@@ -3383,17 +3608,23 @@ Gesendet am {current_date}"""
                     if subject:
                         success = success and ww_db.set_setting(f'{template_key}_subject', subject)
                     success = success and ww_db.set_setting(f'{template_key}_body', body)
-                    
+
                     if success:
                         st.success("✅ Template gespeichert!")
-                        st.rerun()
                     else:
                         st.error("❌ Fehler beim Speichern")
-            
+
             with col2:
                 if st.button("🔄 Zurücksetzen", key=f"reset_{template_key}", use_container_width=True):
                     ww_db.set_setting(f'{template_key}_subject', template_config['default_subject'])
                     ww_db.set_setting(f'{template_key}_body', template_config['default_body'])
+                    # Die Editorfelder haben feste Keys - Streamlit bevorzugt
+                    # dann den Session-State gegenueber dem value-Parameter.
+                    # Ohne dieses Loeschen zeigte das Feld nach dem Reset
+                    # weiter den alten Text und schrieb ihn beim naechsten
+                    # Speichern zurueck.
+                    st.session_state.pop(f"subject_{template_key}", None)
+                    st.session_state.pop(f"body_{template_key}", None)
                     st.success("✅ Auf Standard zurückgesetzt!")
                     st.rerun()
             
@@ -3410,9 +3641,11 @@ Gesendet am {current_date}"""
                 'phone': '+49 172 1234567',
                 'org_name': 'Wasserwacht München',
                 'org_email': 'info@wasserwacht-muenchen.de',
-                'current_date': datetime.now().strftime('%d.%m.%Y %H:%M')
+                'current_date': datetime.now().strftime('%d.%m.%Y %H:%M'),
+                'new_password': 'Xy7bK2mQ',
+                'comment': ''
             }
-            
+
             # Template-Rendering
             preview_body = body
             if subject:
