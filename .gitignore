@@ -1,0 +1,17 @@
+# Streamlit Secrets - duerfen NIEMALS ins Repo
+.streamlit/secrets.toml
+secrets.toml
+*serviceAccount*.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

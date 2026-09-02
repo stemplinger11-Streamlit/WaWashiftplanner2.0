@@ -26,6 +26,18 @@ from google.cloud import firestore
 from google.oauth2 import service_account
 from collections import Counter
 
+import core_rules as rules
+from core_rules import (
+    DEFAULT_PAUSE_START,
+    DEFAULT_PAUSE_END,
+    DEFAULT_CANCEL_DEADLINE_HOURS,
+    bavaria_holidays,
+    holiday_name,
+    is_holiday,
+    slot_start_datetime,
+    to_date_str,
+)
+
 # ===== PAGE CONFIG =====
 st.set_page_config(
     page_title="Wasserwacht Dienstplan+",
@@ -45,14 +57,8 @@ WEEKLY_SLOTS = [
     {"id": 3, "day": "saturday", "day_name": "Samstag", "start": "14:00", "end": "17:00"},
 ]
 
-BAVARIA_HOLIDAYS = {
-    "2025": ["2025-01-01", "2025-01-06", "2025-04-18", "2025-04-21", "2025-05-01", 
-             "2025-05-29", "2025-06-09", "2025-06-19", "2025-08-15", "2025-10-03", 
-             "2025-11-01", "2025-12-25", "2025-12-26"],
-    "2026": ["2026-01-01", "2026-01-06", "2026-04-03", "2026-04-06", "2026-05-01", 
-             "2026-05-14", "2026-05-25", "2026-06-04", "2026-08-15", "2026-10-03", 
-             "2026-11-01", "2026-12-25", "2026-12-26"]
-}
+# Feiertage, Saisonpause und Stornofrist liegen in core_rules.py -
+# dort ohne Streamlit/Firestore und durch test_core_rules.py abgedeckt.
 
 COLORS = {
     "rot": "#DC143C",
@@ -111,28 +117,37 @@ def fmt_de(d):
     except:
         return str(d)
 
-def is_holiday(d):
-    if isinstance(d, date):
-        d = d.strftime("%Y-%m-%d")
-    return d in BAVARIA_HOLIDAYS.get(d[:4], [])
+def get_pause_range():
+    """Saisonpause als ('MM-TT', 'MM-TT') aus den Einstellungen."""
+    start = ww_db.get_setting('season_pause_start', DEFAULT_PAUSE_START)
+    end = ww_db.get_setting('season_pause_end', DEFAULT_PAUSE_END)
+    return start or DEFAULT_PAUSE_START, end or DEFAULT_PAUSE_END
 
-def is_summer(d):
+def get_cancel_deadline_hours():
+    """Stornofrist in Stunden aus den Einstellungen."""
     try:
-        if isinstance(d, str):
-            d = datetime.strptime(d, "%Y-%m-%d")
-        return 6 <= d.month <= 9
-    except:
-        return False
+        return int(ww_db.get_setting('cancel_deadline_hours',
+                                     DEFAULT_CANCEL_DEADLINE_HOURS))
+    except (ValueError, TypeError):
+        return DEFAULT_CANCEL_DEADLINE_HOURS
+
+def is_in_pause(d):
+    return rules.is_in_pause(d, *get_pause_range())
+
+# Rueckwaertskompatibler Alias - alter Name aus V8.1
+is_summer = is_in_pause
 
 def is_blocked(d):
-    return is_holiday(d) or is_summer(d)
+    return rules.is_blocked(d, *get_pause_range())
 
 def block_reason(d):
-    if is_holiday(d):
-        return "Feiertag"
-    elif is_summer(d):
-        return "Sommerpause"
-    return None
+    return rules.block_reason(d, *get_pause_range())
+
+def can_cancel(slot_date_str, slot_time_str, is_admin=False, now=None):
+    """Stornoregel mit der in den Einstellungen gepflegten Frist."""
+    return rules.can_cancel(slot_date_str, slot_time_str, is_admin=is_admin,
+                            now=now, deadline_hours=get_cancel_deadline_hours())
+
 
 def generate_random_password(length=8):
     """Generiert ein sicheres, zufälliges Passwort (nur Buchstaben + Zahlen)"""
@@ -141,6 +156,41 @@ def generate_random_password(length=8):
     # Nur Buchstaben (Groß+Klein) und Zahlen - KEINE Sonderzeichen
     chars = string.ascii_letters + string.digits
     return ''.join(random.choice(chars) for _ in range(length))
+
+# ===== BENACHRICHTIGUNGS-EINSTELLUNGEN =====
+# Bis V8.1 existierten zwei unabhaengige Feld-Schemata nebeneinander:
+# das Profil schrieb '<kanal>_notifications_<ereignis>', die Buchungslogik
+# las '<kanal>_notifications'. Dadurch blieben Profil-Einstellungen wirkungslos.
+# Kanonisch ist jetzt das feingranulare Schema; das alte dient als Fallback,
+# damit Bestandsnutzer ihre bisherige Einstellung behalten.
+NOTIFY_DEFAULTS = {
+    ('email', 'booking'): True,
+    ('email', 'cancellation'): True,
+    ('email', 'reminder'): True,
+    ('sms', 'booking'): False,
+    ('sms', 'reminder'): False,
+}
+
+def notify_pref(user, channel, event):
+    """Moechte dieser Nutzer die Benachrichtigung erhalten?
+
+    channel: 'email' | 'sms'   event: 'booking' | 'cancellation' | 'reminder'
+    """
+    if not user:
+        return False
+    default = NOTIFY_DEFAULTS.get((channel, event), False)
+    value = user.get(f"{channel}_notifications_{event}")
+    if value is not None:
+        return bool(value)
+    # Fallback auf das alte Schema der Bestandsnutzer
+    legacy = user.get(f"{channel}_notifications")
+    if legacy is not None:
+        return bool(legacy)
+    return default
+
+def wants_sms(user, event):
+    """SMS nur wenn gewuenscht UND eine Telefonnummer hinterlegt ist."""
+    return bool(user.get('phone')) and notify_pref(user, 'sms', event)
 
 # ===== CSS INJECTION (PROFESSIONELLES DESIGN) =====
 def inject_css(dark=False):
@@ -639,25 +689,41 @@ class WasserwachtDB:
         self._init_admin()
     
     def _init_admin(self):
-        """Admin-User beim ersten Start erstellen"""
-        if hasattr(st,'secrets'):
-            email = st.secrets.get("ADMIN_EMAIL","admin@wasserwacht.de")
-            pw = st.secrets.get("ADMIN_PASSWORD","admin123")
-            
-            if not self.get_user(email):
-                try:
-                    self.db.collection('users').add({
-                        'email':email,'name':'Admin','phone':'',
-                        'password_hash':hash_pw(pw),
-                        'role':'admin','active':True,
-                        'email_notifications':True,
-                        'sms_notifications':False,
-                        'sms_booking_confirmation':True,
-                        'created_at':firestore.SERVER_TIMESTAMP
-                    })
-                    print(f"✅ Admin erstellt: {email}")
-                except Exception as e:
-                    print(f"Admin-Erstellung fehlgeschlagen: {e}")
+        """Admin-User beim ersten Start erstellen.
+
+        Ohne gesetzte Secrets wird bewusst KEIN Admin angelegt - ein
+        Standardpasswort wuerde einen offen erreichbaren Adminzugang schaffen.
+        """
+        if not hasattr(st, 'secrets'):
+            return
+
+        email = st.secrets.get("ADMIN_EMAIL", "")
+        pw = st.secrets.get("ADMIN_PASSWORD", "")
+
+        if not email or not pw:
+            print("⚠️ ADMIN_EMAIL/ADMIN_PASSWORD nicht gesetzt - kein Admin angelegt")
+            return
+
+        if self.get_user(email):
+            return
+
+        try:
+            self.db.collection('users').add({
+                'email': email, 'name': 'Admin', 'phone': '',
+                'password_hash': hash_pw(pw),
+                'role': 'admin', 'active': True,
+                'email_notifications_booking': True,
+                'email_notifications_cancellation': True,
+                'email_notifications_reminder': True,
+                'sms_notifications_booking': False,
+                'sms_notifications_reminder': False,
+                'email_notifications': True,
+                'sms_notifications': False,
+                'created_at': firestore.SERVER_TIMESTAMP
+            })
+            print(f"✅ Admin erstellt: {email}")
+        except Exception as e:
+            print(f"Admin-Erstellung fehlgeschlagen: {e}")
     
     def get_user(self,email):
         try:
@@ -670,33 +736,60 @@ class WasserwachtDB:
             print(f"❌ get_user Fehler: {e}")
             return None
     
-    def create_user(self,email,name,phone,password,role='user'):
+    def create_user(self, email, name, phone, password, role='user',
+                    active=True, pending_approval=False,
+                    email_notifications=True, sms_notifications=False):
         try:
             if self.get_user(email):
-                return False,"E-Mail bereits registriert"
-            
+                return False, "E-Mail bereits registriert"
+
             self.db.collection('users').add({
-                'email':email,'name':name,'phone':phone,
-                'password_hash':hash_pw(password),
-                'role':role,'active':True,
-                'email_notifications':True,
-                'sms_notifications':False,
-                'sms_booking_confirmation':True,
-                'created_at':firestore.SERVER_TIMESTAMP
+                'email': email, 'name': name, 'phone': phone,
+                'password_hash': hash_pw(password),
+                'role': role, 'active': active,
+                'pending_approval': pending_approval,
+                # Kanonisches Schema, siehe notify_pref()
+                'email_notifications_booking': email_notifications,
+                'email_notifications_cancellation': email_notifications,
+                'email_notifications_reminder': email_notifications,
+                'sms_notifications_booking': sms_notifications,
+                'sms_notifications_reminder': sms_notifications,
+                # Altfelder weiterhin mitschreiben, solange Altcode sie liest
+                'email_notifications': email_notifications,
+                'sms_notifications': sms_notifications,
+                'created_at': firestore.SERVER_TIMESTAMP
             })
-            print(f"✅ User erstellt: {email}")
-            return True,"Registrierung erfolgreich"
+            print(f"✅ User erstellt: {email} (aktiv: {active})")
+            return True, "Registrierung erfolgreich"
         except Exception as e:
             print(f"❌ create_user Fehler: {e}")
-            return False,str(e)
-    
-    def auth(self,email,password):
+            return False, str(e)
+
+    def auth(self, email, password):
+        """Anmeldung pruefen -> (erfolg, user, grund)
+
+        'grund' unterscheidet falsche Zugangsdaten von einem Konto, das noch
+        auf die Freigabe durch einen Admin wartet.
+        """
         u = self.get_user(email)
-        if not u or not u.get('active',True):
-            return False,None
-        if u['password_hash'] == hash_pw(password):
-            return True,u
-        return False,None
+        if not u:
+            return False, None, 'unknown'
+        if u.get('password_hash') != hash_pw(password):
+            return False, None, 'credentials'
+        # Bestandsnutzer ohne 'active'-Feld gelten als aktiv
+        if not u.get('active', True):
+            return False, None, 'pending' if u.get('pending_approval') else 'disabled'
+        return True, u, None
+
+    def get_pending_users(self):
+        """Konten, die auf Freigabe durch einen Admin warten."""
+        return [u for u in self.get_all_users()
+                if u.get('pending_approval') and not u.get('active', True)]
+
+    def approve_user(self, uid):
+        """Gibt ein registriertes Konto frei."""
+        return self.update_user(uid, active=True, pending_approval=False,
+                                approved_at=firestore.SERVER_TIMESTAMP)
     
     def get_all_users(self):
         try:
@@ -839,6 +932,21 @@ class WasserwachtDB:
             print(f"❌ cancel_booking Fehler: {e}")
             return False
     
+    def restore_booking(self, bid):
+        """Macht eine Stornierung rueckgaengig (Rollback bei fehlgeschlagener Umbuchung)."""
+        try:
+            self.db.collection('bookings').document(bid).update({
+                'status': 'confirmed',
+                'cancelled_by': firestore.DELETE_FIELD,
+                'cancelled_at': firestore.DELETE_FIELD,
+                'restored_at': firestore.SERVER_TIMESTAMP
+            })
+            print(f"↩️ Buchung wiederhergestellt: {bid}")
+            return True
+        except Exception as e:
+            print(f"❌ restore_booking Fehler: {e}")
+            return False
+
     def get_setting(self,key,default=''):
         try:
             doc = self.db.collection('settings').document(key).get()
@@ -936,11 +1044,40 @@ class Mailer:
         except Exception as e:
             return False, f"❌ E-Mail Fehler: {type(e).__name__}: {str(e)}"
     
+    # ===== TEMPLATE-VERSAND =====
+    # Bis V8.1 wiederholte jede Methode dieselbe Lade-, Ersetz- und
+    # Sendelogik. Sie liegt jetzt einmal in _send_template().
+
+    def _base_data(self, **extra):
+        """Platzhalter, die in jeder Nachricht verfuegbar sind."""
+        data = {
+            'org_name': ww_db.get_setting('org_name', 'Wasserwacht'),
+            'org_email': self.admin_receiver,
+            'current_date': datetime.now(TZ).strftime('%d.%m.%Y %H:%M'),
+        }
+        data.update({k: v for k, v in extra.items() if v is not None})
+        return data
+
+    def _send_template(self, to, template_key, default_subject, default_body, data):
+        """Laedt das Template aus den Einstellungen, ersetzt Platzhalter, sendet."""
+        if not to:
+            return False, "❌ E-Mail: Keine Empfänger-Adresse angegeben"
+
+        subject = ww_db.get_setting(f'{template_key}_subject', default_subject) or default_subject
+        body = ww_db.get_setting(f'{template_key}_body', default_body) or default_body
+
+        for key, value in data.items():
+            placeholder = '{' + key + '}'
+            subject = subject.replace(placeholder, str(value))
+            body = body.replace(placeholder, str(value))
+
+        return self.send(to, subject, body)
+
     def send_booking_confirmation(self, user_email, user_name, slot_date, slot_time):
-        """Buchungsbestätigung senden - verwendet Template"""
-        # Lade Template aus Firestore
-        subject_template = ww_db.get_setting('email_booking_subject', 'Buchungsbestätigung - {date}')
-        body_template = ww_db.get_setting('email_booking_body', 
+        """Buchungsbestätigung senden"""
+        return self._send_template(
+            user_email, 'email_booking',
+            'Buchungsbestätigung - {date}',
             """Hallo {name},
 
 deine Buchung wurde bestätigt:
@@ -951,63 +1088,35 @@ deine Buchung wurde bestätigt:
 Bei Fragen melde dich gerne unter {org_email}.
 
 Viele Grüße,
-Dein {org_name} Team 🌊""")
-        
-        # Platzhalter ersetzen
-        data = {
-            'name': user_name,
-            'date': fmt_de(slot_date),
-            'time': slot_time,
-            'email': user_email,
-            'org_name': ww_db.get_setting('org_name', 'Wasserwacht'),
-            'org_email': self.admin_receiver,
-            'current_date': datetime.now().strftime('%d.%m.%Y %H:%M')
-        }
-        
-        subject = subject_template
-        body = body_template
-        for key, value in data.items():
-            subject = subject.replace('{' + key + '}', str(value))
-            body = body.replace('{' + key + '}', str(value))
-        
-        return self.send(user_email, subject, body)
-    
-    def send_cancellation(self, user_email, user_name, slot_date, slot_time):
-        """Stornierungsbestätigung senden - verwendet Template"""
-        subject_template = ww_db.get_setting('email_cancellation_subject', 'Stornierung - {date}')
-        body_template = ww_db.get_setting('email_cancellation_body',
+Dein {org_name} Team 🌊""",
+            self._base_data(name=user_name, date=fmt_de(slot_date),
+                            time=slot_time, email=user_email)
+        )
+
+    def send_cancellation(self, user_email, user_name, slot_date, slot_time, comment=None):
+        """Stornierungsbestätigung senden"""
+        return self._send_template(
+            user_email, 'email_cancellation',
+            'Stornierung - {date}',
             """Hallo {name},
 
 deine Buchung wurde storniert:
 
 📅 Datum: {date}
 ⏰ Uhrzeit: {time}
-
+{comment}
 Viele Grüße,
-Dein {org_name} Team 🌊""")
-        
-        data = {
-            'name': user_name,
-            'date': fmt_de(slot_date),
-            'time': slot_time,
-            'email': user_email,
-            'org_name': ww_db.get_setting('org_name', 'Wasserwacht'),
-            'org_email': self.admin_receiver,
-            'current_date': datetime.now().strftime('%d.%m.%Y %H:%M')
-        }
-        
-        subject = subject_template
-        body = body_template
-        for key, value in data.items():
-            subject = subject.replace('{' + key + '}', str(value))
-            body = body.replace('{' + key + '}', str(value))
-        
-        return self.send(user_email, subject, body)
-    
+Dein {org_name} Team 🌊""",
+            self._base_data(name=user_name, date=fmt_de(slot_date),
+                            time=slot_time, email=user_email,
+                            comment=("\n💬 Grund: " + comment + "\n") if comment else "")
+        )
+
     def send_reminder(self, user_email, user_name, slot_date, slot_time):
-        """Erinnerung senden - verwendet Template"""
-        subject_template = ww_db.get_setting('email_reminder_subject', '⏰ Erinnerung: Dienst morgen - {date}')
-        body_template = ww_db.get_setting('email_reminder_body',
+        """Erinnerung senden"""
+        return self._send_template(
+            user_email, 'email_reminder',
+            '⏰ Erinnerung: Dienst morgen - {date}',
             """Hallo {name},
 
 dein Dienst ist morgen:
@@ -1016,79 +1125,65 @@ dein Dienst ist morgen:
 ⏰ Uhrzeit: {time}
 
 Bis morgen!
-Dein {org_name} Team 🌊""")
-        
-        data = {
-            'name': user_name,
-            'date': fmt_de(slot_date),
-            'time': slot_time,
-            'email': user_email,
-            'org_name': ww_db.get_setting('org_name', 'Wasserwacht'),
-            'org_email': self.admin_receiver,
-            'current_date': datetime.now().strftime('%d.%m.%Y %H:%M')
-        }
-        
-        subject = subject_template
-        body = body_template
-        for key, value in data.items():
-            subject = subject.replace('{' + key + '}', str(value))
-            body = body.replace('{' + key + '}', str(value))
-        
-        return self.send(user_email, subject, body)
-    
+Dein {org_name} Team 🌊""",
+            self._base_data(name=user_name, date=fmt_de(slot_date),
+                            time=slot_time, email=user_email)
+        )
+
     def send_welcome(self, user_email, user_name):
-        """Willkommens-E-Mail senden - NEU"""
-        subject_template = ww_db.get_setting('email_welcome_subject', 'Willkommen bei {org_name}!')
-        body_template = ww_db.get_setting('email_welcome_body',
+        """Bestätigung der Registrierung - Konto wartet auf Freigabe"""
+        return self._send_template(
+            user_email, 'email_welcome',
+            'Deine Registrierung bei {org_name}',
             """Hallo {name},
 
-herzlich willkommen bei {org_name}! 🌊
+danke für deine Registrierung bei {org_name}! 🌊
 
-Dein Account wurde erfolgreich erstellt.
-Du kannst dich jetzt anmelden und Schichten buchen.
+Dein Konto wurde angelegt und muss noch von einem Administrator
+freigegeben werden. Sobald das erledigt ist, erhältst du eine
+weitere E-Mail und kannst dich anmelden.
 
-📧 E-Mail: {email}
+📧 Deine E-Mail: {email}
 
 Bei Fragen erreichst du uns unter {org_email}.
 
 Viele Grüße,
-Dein {org_name} Team""")
-        
-        data = {
-            'name': user_name,
-            'email': user_email,
-            'org_name': ww_db.get_setting('org_name', 'Wasserwacht'),
-            'org_email': self.admin_receiver,
-            'current_date': datetime.now().strftime('%d.%m.%Y %H:%M')
-        }
-        
-        subject = subject_template
-        body = body_template
-        for key, value in data.items():
-            subject = subject.replace('{' + key + '}', str(value))
-            body = body.replace('{' + key + '}', str(value))
-        
-        return self.send(user_email, subject, body)
-    
-    def send_password_reset(self, user_email, user_name, new_password):
-        """Password Reset Email senden - verwendet Template aus DB"""
-        # Template aus DB laden (falls Admin es angepasst hat)
-        subject_template = ww_db.get_setting(
-            'email_password_reset_subject', 
-            '🔐 Passwort zurückgesetzt - {org_name}'
+Dein {org_name} Team""",
+            self._base_data(name=user_name, email=user_email)
         )
-        body_template = ww_db.get_setting(
-            'email_password_reset_body',
+
+    def send_account_approved(self, user_email, user_name):
+        """Konto wurde von einem Admin freigegeben"""
+        return self._send_template(
+            user_email, 'email_approved',
+            '✅ Dein Zugang ist freigeschaltet - {org_name}',
+            """Hallo {name},
+
+dein Konto wurde freigegeben. Du kannst dich ab sofort anmelden
+und Schichten buchen. 🌊
+
+📧 Deine E-Mail: {email}
+
+Viele Grüße,
+Dein {org_name} Team""",
+            self._base_data(name=user_name, email=user_email)
+        )
+
+    def send_password_reset(self, user_email, user_name, new_password):
+        """Password Reset Email senden"""
+        return self._send_template(
+            user_email, 'email_password_reset',
+            '🔐 Passwort zurückgesetzt - {org_name}',
             """Hallo {name},
 
 dein Passwort wurde von einem Administrator zurückgesetzt.
 
-🔑 **Dein neues temporäres Passwort:**
+🔑 Dein neues temporäres Passwort:
 {new_password}
 
-⚠️ **WICHTIG - Bitte beachten:**
+⚠️ WICHTIG - Bitte beachten:
 1. Verwende dieses Passwort für die nächste Anmeldung
-2. Ändere dein Passwort nach dem Login in ein persönliches, sicheres Passwort (im Profil unter "Sicherheit")
+2. Ändere dein Passwort danach im Profil unter "Sicherheit"
 3. Bewahre dieses Passwort sicher auf
 
 📧 Deine E-Mail: {email}
@@ -1099,34 +1194,18 @@ Viele Grüße,
 Dein {org_name} Team 🌊
 
 ---
-Gesendet am {current_date}"""
+Gesendet am {current_date}""",
+            self._base_data(name=user_name, email=user_email,
+                            new_password=new_password)
         )
-        
-        # Variablen ersetzen
-        data = {
-            'name': user_name,
-            'email': user_email,
-            'new_password': new_password,
-            'org_name': ww_db.get_setting('org_name', 'Wasserwacht'),
-            'org_email': self.admin_receiver,
-            'current_date': datetime.now(TZ).strftime('%d.%m.%Y %H:%M')
-        }
-        
-        subject = subject_template
-        body = body_template
-        for key, value in data.items():
-            subject = subject.replace('{' + key + '}', str(value))
-            body = body.replace('{' + key + '}', str(value))
-        
-        return self.send(user_email, subject, body)
 
     def send_admin_notification(self, user_name, user_email, user_phone, slot_date, slot_time):
-        """Admin-Benachrichtigung bei neuer Buchung - NEU"""
+        """Admin-Benachrichtigung bei neuer Buchung"""
         if not self.admin_receiver:
             return False, "Keine Admin-E-Mail konfiguriert"
-        
-        subject_template = ww_db.get_setting('email_admin_notification_subject', '🔔 Neue Buchung: {name} - {date}')
-        body_template = ww_db.get_setting('email_admin_notification_body',
+        return self._send_template(
+            self.admin_receiver, 'email_admin_notification',
+            '🔔 Neue Buchung: {name} - {date}',
             """Neue Buchung im Dienstplan:
 
 👤 Name: {name}
@@ -1136,26 +1215,32 @@ Gesendet am {current_date}"""
 📅 Datum: {date}
 ⏰ Uhrzeit: {time}
 
-Gebucht am: {current_date}""")
-        
-        data = {
-            'name': user_name,
-            'email': user_email,
-            'phone': user_phone if user_phone else 'Nicht angegeben',
-            'date': fmt_de(slot_date),
-            'time': slot_time,
-            'org_name': ww_db.get_setting('org_name', 'Wasserwacht'),
-            'org_email': self.admin_receiver,
-            'current_date': datetime.now().strftime('%d.%m.%Y %H:%M')
-        }
-        
-        subject = subject_template
-        body = body_template
-        for key, value in data.items():
-            subject = subject.replace('{' + key + '}', str(value))
-            body = body.replace('{' + key + '}', str(value))
-        
-        return self.send(self.admin_receiver, subject, body)
+Gebucht am: {current_date}""",
+            self._base_data(name=user_name, email=user_email,
+                            phone=user_phone or 'Nicht angegeben',
+                            date=fmt_de(slot_date), time=slot_time)
+        )
+
+    def send_registration_notice(self, user_name, user_email, user_phone):
+        """Admin ueber eine neue, freizugebende Registrierung informieren"""
+        if not self.admin_receiver:
+            return False, "Keine Admin-E-Mail konfiguriert"
+        return self._send_template(
+            self.admin_receiver, 'email_registration_notice',
+            '👤 Neue Registrierung wartet auf Freigabe: {name}',
+            """Eine neue Registrierung wartet auf Freigabe:
+
+👤 Name: {name}
+📧 E-Mail: {email}
+📱 Telefon: {phone}
+
+Registriert am: {current_date}
+
+Freigeben unter: Benutzer -> Offene Freigaben""",
+            self._base_data(name=user_name, email=user_email,
+                            phone=user_phone or 'Nicht angegeben')
+        )
+
 
 # ===== SMS KLASSE (VOLLSTÄNDIG MIT TEMPLATE-SUPPORT) =====
 class TwilioSMS:
@@ -1308,11 +1393,17 @@ def login_page():
             
             if submit:
                 if email and password:
-                    success, user = ww_db.auth(email, password)
+                    success, user, reason = ww_db.auth(email, password)
                     if success:
                         st.session_state.user = user
                         st.success(f"✅ Willkommen, {user['name']}!")
                         st.rerun()
+                    elif reason == 'pending':
+                        st.warning("⏳ Dein Konto wurde noch nicht freigegeben. "
+                                   "Ein Administrator prüft deine Registrierung.")
+                    elif reason == 'disabled':
+                        st.error("❌ Dein Konto ist deaktiviert. "
+                                 "Bitte wende dich an einen Administrator.")
                     else:
                         st.error("❌ Ungültige Anmeldedaten")
                 else:
@@ -1335,15 +1426,29 @@ def login_page():
             if reg_submit:
                 if not reg_name or not reg_email or not reg_pw:
                     st.error("❌ Bitte alle Pflichtfelder (*) ausfüllen")
+                elif '@' not in reg_email or '.' not in reg_email:
+                    st.error("❌ Bitte eine gültige E-Mail-Adresse angeben")
                 elif reg_pw != reg_pw2:
                     st.error("❌ Passwörter stimmen nicht überein")
                 elif len(reg_pw) < 6:
                     st.error("❌ Passwort muss mindestens 6 Zeichen haben")
                 else:
-                    success, msg = ww_db.create_user(reg_email, reg_name, reg_phone, reg_pw)
+                    # Neue Konten sind bis zur Freigabe durch einen Admin inaktiv.
+                    # Die Auswahl der Benachrichtigungen wird jetzt uebernommen -
+                    # bis V8.1 wurden die Checkboxen ignoriert.
+                    success, msg = ww_db.create_user(
+                        reg_email, reg_name, reg_phone, reg_pw,
+                        active=False, pending_approval=True,
+                        email_notifications=email_notif,
+                        sms_notifications=sms_notif
+                    )
                     if success:
-                        st.success(f"✅ {msg}! Du kannst dich jetzt anmelden.")
+                        st.success("✅ Registrierung eingegangen!")
+                        st.info("⏳ Ein Administrator muss dein Konto noch freigeben. "
+                                "Du erhältst eine E-Mail, sobald du dich anmelden kannst.")
                         st.balloons()
+                        mailer.send_welcome(reg_email, reg_name)
+                        mailer.send_registration_notice(reg_name, reg_email, reg_phone)
                     else:
                         st.error(f"❌ {msg}")
 
@@ -1557,23 +1662,33 @@ def kalender_page():
         if not blocked:
             if booking:
                 # Gebuchter Slot
-                if booking.get('user_email') == user.get('email') or user.get('role') == 'admin':
+                is_admin_user = user.get('role') == 'admin'
+                if booking.get('user_email') == user.get('email') or is_admin_user:
+                    slot_time_str = f"{slot_config['start']} - {slot_config['end']}"
+                    allowed, hinweis = can_cancel(sd, slot_time_str, is_admin=is_admin_user)
+
                     col_btn1, col_btn2 = st.columns([4, 1])
-                    with col_btn2:
-                        if st.button("❌ Stornieren", key=f"cancel_{sd}_{slot_config['start']}", use_container_width=True):
-                            success = ww_db.cancel_booking(booking['id'], user.get('email'))
-                            if success:
-                                # Email senden
-                                mailer.send_cancellation(
-                                    booking.get('user_email'),
-                                    booking.get('user_name'),
-                                    sd,
-                                    f"{slot_config['start']} - {slot_config['end']}"
-                                )
-                                st.success("✅ Stornierung erfolgreich!")
-                                st.rerun()
-                            else:
-                                st.error("❌ Fehler bei der Stornierung")
+                    if not allowed:
+                        with col_btn1:
+                            st.caption(f"🔒 {hinweis}")
+                    else:
+                        with col_btn2:
+                            if st.button("❌ Stornieren",
+                                         key=f"cancel_{sd}_{slot_config['start']}",
+                                         use_container_width=True):
+                                success = ww_db.cancel_booking(booking['id'], user.get('email'))
+                                if success:
+                                    booked_user = ww_db.get_user(booking.get('user_email')) or {}
+                                    if notify_pref(booked_user, 'email', 'cancellation'):
+                                        mailer.send_cancellation(
+                                            booking.get('user_email'),
+                                            booking.get('user_name'),
+                                            sd, slot_time_str
+                                        )
+                                    st.success("✅ Stornierung erfolgreich!")
+                                    st.rerun()
+                                else:
+                                    st.error("❌ Fehler bei der Stornierung")
             else:
                 # Freier Slot - DIREKTER BUTTON WIE IM ORIGINAL
                 col_info, col_btn = st.columns([4, 1])
@@ -1590,22 +1705,22 @@ def kalender_page():
                         
                         if success:
                             # Benachrichtigungen senden
-                            if user.get('email_notifications', True):
+                            if notify_pref(user, 'email', 'booking'):
                                 mailer.send_booking_confirmation(
                                     user.get('email'),
                                     user.get('name'),
                                     sd,
                                     f"{slot_config['start']} - {slot_config['end']}"
                                 )
-                            
-                            if user.get('sms_notifications', False) and user.get('phone'):
+
+                            if wants_sms(user, 'booking'):
                                 sms_client.send_booking_confirmation(
                                     user.get('phone'),
                                     user.get('name'),
                                     sd,
                                     f"{slot_config['start']} - {slot_config['end']}"
                                 )
-                            
+
                             # Admin-Benachrichtigung
                             if user.get('role') != 'admin':
                                 mailer.send_admin_notification(
@@ -1666,13 +1781,23 @@ def meine_buchungen_page():
                     if b.get('user_phone'):
                         st.markdown(f"**📱 Telefon:** {b['user_phone']}")
                     
-                    if st.button("❌ Stornieren", key=f"cancel_my_{b['id']}"):
+                    allowed, hinweis = can_cancel(
+                        b['slot_date'], b.get('slot_time', ''),
+                        is_admin=user.get('role') == 'admin'
+                    )
+                    if not allowed:
+                        st.info(f"🔒 {hinweis}")
+                    elif st.button("❌ Stornieren", key=f"cancel_my_{b['id']}"):
                         if ww_db.cancel_booking(b['id'], user['email']):
-                            success, msg = mailer.send_cancellation(
-                                user['email'], user['name'], b['slot_date'], b.get('slot_time', '')
-                            )
+                            if notify_pref(user, 'email', 'cancellation'):
+                                mailer.send_cancellation(
+                                    user['email'], user['name'],
+                                    b['slot_date'], b.get('slot_time', '')
+                                )
                             st.success("✅ Buchung storniert")
                             st.rerun()
+                        else:
+                            st.error("❌ Fehler bei der Stornierung")
     
     with tab2:
         if not past:
@@ -2256,6 +2381,7 @@ Details:
                                 label += " (Frei)"
                                 available_slots.append((label, slot_d, slot_time, False, None))
                         
+                        selected_slot = None
                         if not available_slots:
                             st.warning("Keine Slots in dieser Woche verfügbar")
                         else:
@@ -2264,18 +2390,25 @@ Details:
                                 options=[s[0] for s in available_slots]
                             )
                             selected_slot = [s for s in available_slots if s[0] == selected_slot_str][0]
-                    
+
                     # Optionen
                     notify_user = st.checkbox("User per E-Mail/SMS benachrichtigen", value=True)
-                    
+
                     # Submit
                     submit = st.form_submit_button("📝 Buchung erstellen", use_container_width=True, type="primary")
-                    
+
                     if submit:
+                        if selected_slot is None:
+                            # Ohne diese Pruefung lief der Zugriff bisher in
+                            # einen NameError und die Seite stuerzte ab.
+                            st.error("❌ In dieser Woche gibt es keinen Slot zum Buchen. "
+                                     "Bitte eine andere Woche wählen.")
+                            st.stop()
+
                         slot_d = selected_slot[1]
                         slot_time = selected_slot[2]
                         is_occupied = selected_slot[3]
-                        
+
                         if is_occupied:
                             st.error("❌ Dieser Slot ist bereits gebucht oder blockiert!")
                         else:
@@ -2304,7 +2437,7 @@ Details:
                                         st.info(f"📧 {email_msg}")
                                     
                                     # SMS
-                                    if selected_user.get('phone') and selected_user.get('sms_notifications_booking'):
+                                    if wants_sms(selected_user, 'booking'):
                                         sms_success, sms_msg = sms_client.send_booking_confirmation(
                                             selected_user['phone'],
                                             selected_user['name'],
@@ -2387,14 +2520,17 @@ Details:
                         submit = st.form_submit_button("🔄 Umbuchung durchführen", use_container_width=True, type="primary")
                         
                         if submit:
-                            # Alte Buchung löschen
-                            try:
-                                db.collection('bookings').document(selected_booking['id']).delete()
-                            except:
-                                st.error("Fehler beim Löschen der alten Buchung")
+                            # Reihenfolge ist bewusst: erst die alte Buchung
+                            # stornieren (nicht loeschen - Nachvollziehbarkeit),
+                            # dann die neue anlegen. Schlaegt das Anlegen fehl,
+                            # wird die Stornierung zurueckgenommen, damit die
+                            # Schicht nie unbesetzt zurueckbleibt.
+                            if not ww_db.cancel_booking(selected_booking['id'],
+                                                        f"umbuchung durch {st.session_state.user.get('email')}"):
+                                st.error("❌ Die bestehende Buchung konnte nicht storniert werden. "
+                                         "Es wurde nichts verändert.")
                                 st.stop()
-                            
-                            # Neue Buchung erstellen
+
                             success, msg = ww_db.create_booking(
                                 selected_booking['slot_date'],
                                 selected_booking['slot_time'],
@@ -2402,7 +2538,15 @@ Details:
                                 new_user['name'],
                                 new_user.get('phone', '')
                             )
-                            
+
+                            if not success:
+                                # Rollback: alte Buchung wieder aktiv setzen
+                                ww_db.restore_booking(selected_booking['id'])
+                                st.error(f"❌ Umbuchung fehlgeschlagen: {msg}")
+                                st.warning("↩️ Die ursprüngliche Buchung von "
+                                           f"{selected_booking['user_name']} wurde wiederhergestellt.")
+                                st.stop()
+
                             if success:
                                 st.success(f"✅ Umbuchung erfolgreich! Slot wurde von {selected_booking['user_name']} auf {new_user['name']} übertragen.")
                                 
@@ -2413,7 +2557,8 @@ Details:
                                         selected_booking['user_email'],
                                         selected_booking['user_name'],
                                         selected_booking['slot_date'],
-                                        selected_booking['slot_time']
+                                        selected_booking['slot_time'],
+                                        comment=comment or None
                                     )
                                     
                                     # Neuer User: Buchungsbestätigung
