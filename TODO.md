@@ -186,6 +186,32 @@ Migration der Bestandsbuchungen auf die neuen IDs.
 
 ---
 
+## Ideen für den weiteren Ausbau
+
+Ausführlich mit Einschätzung zu Wirkung und Aufwand:
+**[Dienstplan Ausbaustufen](https://claude.ai/code/artifact/538b96de-9b61-4092-b8ab-78a328b08543)**
+
+Kurzfassung:
+
+**Zuerst zu klären:** Eine Schicht lässt genau *eine* Buchung zu. Für einen
+Wachdienst wäre das ungewöhnlich — davon hängen Warteliste, Qualifikationen,
+Unterbesetzungs-Warnung und Anwesenheitsnachweis ab.
+
+*Für Nutzer:* Kalender-Abo (ICS), Vertretungssuche statt Anruf beim Admin,
+Saisonübersicht statt Wochenklickerei, Serientermine, Notiz zur Buchung,
+eigene Dienstbilanz, Ablage auf dem Handy-Startbildschirm.
+
+*Für Admins:* Besetzungsampel über die ganze Saison, einzelne Termine sperren
+(Beckenreinigung, Hallenbelegung), automatischer Aufruf bei unbesetzten
+Diensten, Rundnachricht, Sonderdienste außerhalb des Rasters,
+Qualifikationen mit Ablaufdatum, Anwesenheit bestätigen, Konten-Import.
+
+*Betrieb und Recht:* **Datenschutzerklärung fehlt** (Impressum existiert),
+Löschkonzept für ausgeschiedene Mitglieder, `showErrorDetails` vor
+Saisonstart abschalten.
+
+---
+
 ## Entschiedene Fragen
 
 1. **Saisonpause:** konfigurierbar, Standard 01.06.–14.09. → ab Mitte September buchbar.
