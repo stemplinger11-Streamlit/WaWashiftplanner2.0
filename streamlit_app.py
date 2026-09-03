@@ -33,7 +33,12 @@ from core_rules import (
 )
 # Passwort-Hashing inkl. stiller Migration der Bestandsnutzer,
 # abgedeckt durch test_core_auth.py.
-from core_auth import hash_pw, pw_pruefen
+from core_auth import (
+    DEFAULT_SESSION_TIMEOUT_MINUTES,
+    hash_pw,
+    pw_pruefen,
+    session_abgelaufen,
+)
 
 # ===== PAGE CONFIG =====
 st.set_page_config(
@@ -124,6 +129,14 @@ def get_cancel_deadline_hours():
                                      DEFAULT_CANCEL_DEADLINE_HOURS))
     except (ValueError, TypeError):
         return DEFAULT_CANCEL_DEADLINE_HOURS
+
+def get_session_timeout_minutes():
+    """Abmeldung nach Inaktivitaet, in Minuten (0 = aus)."""
+    try:
+        return int(ww_db.get_setting('session_timeout_minutes',
+                                     DEFAULT_SESSION_TIMEOUT_MINUTES))
+    except (ValueError, TypeError):
+        return DEFAULT_SESSION_TIMEOUT_MINUTES
 
 def is_in_pause(d):
     return rules.is_in_pause(d, *get_pause_range())
@@ -1431,6 +1444,10 @@ if 'selected_week' not in st.session_state:
 def login_page():
     st.title("🌊 Wasserwacht Dienstplan+")
     st.markdown(f"**Version:** {VERSION}")
+
+    if st.session_state.pop('session_expired', False):
+        st.info("🔒 Du wurdest wegen längerer Inaktivität abgemeldet. "
+                "Bitte melde dich erneut an.")
     
     tab1, tab2 = st.tabs(["🔐 Anmelden", "📝 Registrieren"])
     
@@ -1445,6 +1462,8 @@ def login_page():
                     success, user, reason = ww_db.auth(email, password)
                     if success:
                         st.session_state.user = user
+                        st.session_state.last_activity = datetime.now()
+                        st.session_state.pop('session_expired', None)
                         st.success(f"✅ Willkommen, {user['name']}!")
                         st.rerun()
                     elif reason == 'pending':
@@ -1504,6 +1523,7 @@ def login_page():
 def logout():
     st.session_state.user = None
     st.session_state.page = 'kalender'
+    st.session_state.pop('last_activity', None)
     st.rerun()
 
 # ===== NAVIGATION =====
@@ -2744,6 +2764,27 @@ Details:
 
         st.divider()
 
+        # ===== SITZUNG =====
+        st.markdown("### 🔒 Automatische Abmeldung")
+        with st.form("session_form"):
+            aktuell = get_session_timeout_minutes()
+            neuer_wert = st.number_input(
+                "Abmeldung nach ... Minuten ohne Aktivität",
+                min_value=0, max_value=1440, value=aktuell, step=15
+            )
+            st.caption("💡 0 schaltet die automatische Abmeldung ab. "
+                       "Schützt vor allem geteilte Geräte, auf denen sich "
+                       "jemand anzumelden vergisst.")
+            if st.form_submit_button("💾 Speichern", type="primary"):
+                if ww_db.set_setting('session_timeout_minutes', str(int(neuer_wert))):
+                    st.success("✅ Gespeichert"
+                               if neuer_wert else "✅ Automatische Abmeldung deaktiviert")
+                    st.rerun()
+                else:
+                    st.error("❌ Fehler beim Speichern")
+
+        st.divider()
+
         # ===== ORGANISATION =====
         st.markdown("### 🏢 Organisation")
         with st.form("org_form"):
@@ -3759,7 +3800,19 @@ def main():
     if not st.session_state.user:
         login_page()
         return
-    
+
+    # Abmeldung nach Inaktivitaet. Die Sitzung liegt nur im Arbeitsspeicher
+    # des Browsers - dieser Timeout schuetzt vor allem geteilte Geraete.
+    if session_abgelaufen(st.session_state.get('last_activity'),
+                          timeout_minuten=get_session_timeout_minutes()):
+        st.session_state.user = None
+        st.session_state.pop('last_activity', None)
+        st.session_state.session_expired = True
+        st.rerun()
+
+    # Jede Interaktion verlaengert die Sitzung
+    st.session_state.last_activity = datetime.now()
+
     # Navigation anzeigen
     show_navigation()
     

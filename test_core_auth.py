@@ -123,3 +123,62 @@ def test_umlaute_im_passwort():
 def test_legacy_funktion_unveraendert():
     """Absicherung: das alte Verfahren darf sich nicht verschieben."""
     assert hash_pw_legacy("test") == hashlib.sha256(b"test").hexdigest()
+
+
+# ===== SITZUNGS-TIMEOUT =====
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+from core_auth import (  # noqa: E402
+    DEFAULT_SESSION_TIMEOUT_MINUTES,
+    session_abgelaufen,
+)
+
+JETZT = datetime(2026, 9, 15, 18, 0, 0)
+
+
+def test_standard_timeout_ist_60_minuten():
+    assert DEFAULT_SESSION_TIMEOUT_MINUTES == 60
+
+
+def test_frische_aktivitaet_laeuft_nicht_ab():
+    assert not session_abgelaufen(JETZT - timedelta(minutes=5), jetzt=JETZT)
+
+
+def test_kurz_vor_ablauf_bleibt_angemeldet():
+    assert not session_abgelaufen(JETZT - timedelta(minutes=59), jetzt=JETZT)
+
+
+def test_genau_an_der_grenze_bleibt_angemeldet():
+    assert not session_abgelaufen(JETZT - timedelta(minutes=60), jetzt=JETZT)
+
+
+def test_nach_ablauf_wird_abgemeldet():
+    assert session_abgelaufen(JETZT - timedelta(minutes=61), jetzt=JETZT)
+
+
+def test_lange_inaktivitaet():
+    assert session_abgelaufen(JETZT - timedelta(hours=8), jetzt=JETZT)
+
+
+def test_abweichender_timeout():
+    letzte = JETZT - timedelta(minutes=31)
+    assert session_abgelaufen(letzte, jetzt=JETZT, timeout_minuten=30)
+    assert not session_abgelaufen(letzte, jetzt=JETZT, timeout_minuten=60)
+
+
+@pytest.mark.parametrize("wert", [0, None])
+def test_timeout_deaktivierbar(wert):
+    assert not session_abgelaufen(JETZT - timedelta(days=3), jetzt=JETZT,
+                                  timeout_minuten=wert)
+
+
+def test_ohne_letzte_aktivitaet_kein_ablauf():
+    """Erster Aufruf nach dem Login - noch nichts gemerkt."""
+    assert not session_abgelaufen(None, jetzt=JETZT)
+
+
+def test_gemischte_zeitzonen_sperren_niemanden_aus():
+    """Ein Vergleichsfehler darf nicht zur Abmeldung fuehren."""
+    mit_zone = datetime(2026, 9, 15, 10, 0, 0, tzinfo=timezone.utc)
+    assert not session_abgelaufen(mit_zone, jetzt=JETZT)

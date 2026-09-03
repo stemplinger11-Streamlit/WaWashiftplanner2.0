@@ -127,6 +127,8 @@ sie liegen in der Collection `settings` und brauchen keine Codeänderung:
 - **Stornofrist** – Stunden vor Dienstbeginn, bis zu denen Nutzer selbst
   stornieren dürfen. Standard: 12. Administratoren sind ausgenommen.
 - **Organisationsname** – erscheint in allen Nachrichten als `{org_name}`.
+- **Automatische Abmeldung** – Minuten ohne Aktivität, bis die Sitzung
+  endet. Standard: 60. `0` schaltet die Abmeldung ab.
 - **Dark Mode** – globale Voreinstellung.
 
 Die Texte aller E-Mails und SMS lassen sich unter *Vorlagen* bearbeiten.

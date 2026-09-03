@@ -15,6 +15,7 @@ Bewusst frei von Streamlit- und Firestore-Abhaengigkeiten, damit die Logik
 ohne App und ohne Datenbank testbar ist.
 """
 import hashlib
+from datetime import datetime
 
 try:
     import bcrypt
@@ -25,6 +26,31 @@ except ImportError:  # pragma: no cover
 
 # Kostenfaktor. 12 ist ein gaengiger Kompromiss aus Sicherheit und Wartezeit.
 BCRYPT_ROUNDS = 12
+
+# Abmeldung nach Inaktivitaet. Bewusst grosszuegig: die App wird ueberwiegend
+# nebenbei benutzt, ein zu kurzer Wert waere nur laestig. 0 schaltet ab.
+DEFAULT_SESSION_TIMEOUT_MINUTES = 60
+
+
+def session_abgelaufen(letzte_aktivitaet, jetzt=None,
+                       timeout_minuten=DEFAULT_SESSION_TIMEOUT_MINUTES):
+    """Ist die Sitzung wegen Inaktivitaet abgelaufen?
+
+    Im Zweifel wird False zurueckgegeben: Ein Fehler hier duerfte niemanden
+    aus der App aussperren.
+    """
+    if not timeout_minuten or timeout_minuten <= 0:
+        return False  # Timeout deaktiviert
+    if letzte_aktivitaet is None:
+        return False
+
+    jetzt = jetzt or datetime.now()
+    try:
+        vergangen = (jetzt - letzte_aktivitaet).total_seconds()
+    except TypeError:
+        # Ein Wert mit, einer ohne Zeitzone - nicht vergleichbar.
+        return False
+    return vergangen > timeout_minuten * 60
 
 
 def hash_pw_legacy(pw):
