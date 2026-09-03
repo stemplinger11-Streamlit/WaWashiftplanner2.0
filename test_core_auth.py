@@ -186,8 +186,6 @@ def test_gemischte_zeitzonen_sperren_niemanden_aus():
 
 # ===== ANGEMELDET BLEIBEN =====
 
-from datetime import timezone  # noqa: E402
-
 from core_auth import (  # noqa: E402
     DEFAULT_REMEMBER_DAYS,
     SESSION_COOKIE_NAME,

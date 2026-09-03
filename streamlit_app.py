@@ -174,14 +174,31 @@ def generate_random_password(length=8):
 # das Cookie-Handling aus, muss der normale Login trotzdem funktionieren -
 # ein Fehler hier darf niemanden aussperren.
 
-@st.cache_resource
+# Der Manager wird bei JEDEM Skriptlauf neu erzeugt - bewusst ohne Cache:
+#   * Sein Konstruktor rendert eine Komponente. Streamlit verbietet Widgets
+#     in gecachten Funktionen und bricht dort mit CachedWidgetWarning ab.
+#   * Er liest die Cookies im Konstruktor in self.cookies. Eine ueber
+#     mehrere Laeufe wiederverwendete Instanz lieferte veraltete Werte.
+# Schlaegt die Erzeugung fehl, bleibt der Manager None und die App laeuft
+# ohne "Angemeldet bleiben" weiter - der normale Login darf nie blockieren.
+try:
+    _cookie_manager = stx.CookieManager(key='wawa_cookies')
+except Exception as _cookie_fehler:
+    print(f"⚠️ Cookie-Manager nicht verfügbar: {_cookie_fehler}")
+    _cookie_manager = None
+
+
 def get_cookie_manager():
-    return stx.CookieManager(key='wawa_cookies')
+    """Der Manager dieses Skriptlaufs, oder None wenn nicht verfuegbar."""
+    return _cookie_manager
 
 
 def cookie_lesen(name):
     try:
-        return get_cookie_manager().get(cookie=name)
+        manager = get_cookie_manager()
+        if manager is None:
+            return None
+        return manager.get(cookie=name)
     except Exception as e:
         print(f"⚠️ Cookie nicht lesbar: {e}")
         return None
@@ -189,7 +206,10 @@ def cookie_lesen(name):
 
 def cookie_setzen(name, wert, tage):
     try:
-        get_cookie_manager().set(
+        manager = get_cookie_manager()
+        if manager is None:
+            return False
+        manager.set(
             name, wert,
             expires_at=datetime.now() + timedelta(days=tage),
             key=f'set_{name}'
@@ -202,7 +222,10 @@ def cookie_setzen(name, wert, tage):
 
 def cookie_loeschen(name):
     try:
-        get_cookie_manager().delete(name, key=f'del_{name}')
+        manager = get_cookie_manager()
+        if manager is None:
+            return False
+        manager.delete(name, key=f'del_{name}')
         return True
     except Exception as e:
         print(f"⚠️ Cookie nicht loeschbar: {e}")

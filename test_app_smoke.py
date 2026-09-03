@@ -156,3 +156,34 @@ def test_cookie_fehler_sperrt_niemanden_aus(app, monkeypatch):
     assert app.cookie_lesen('irgendwas') is None
     assert app.cookie_setzen('a', 'b', 30) is False
     assert app.cookie_loeschen('a') is False
+
+
+def test_cookie_manager_ist_nicht_gecacht(app):
+    """Regression: @st.cache_resource auf dem Cookie-Manager brach die App.
+
+    Sein Konstruktor rendert eine Komponente. Streamlit verbietet Widgets in
+    gecachten Funktionen und wirft CachedWidgetWarning - der Fehler trat auf,
+    bevor sich ueberhaupt jemand anmelden konnte. Gecachte Funktionen sind
+    keine gewoehnlichen Funktionen, sie tragen ein .clear().
+    """
+    assert not hasattr(app.get_cookie_manager, 'clear'), (
+        "get_cookie_manager ist gecacht - der Konstruktor rendert aber eine "
+        "Komponente. Cache entfernen.")
+
+
+def test_keine_widgets_in_gecachten_funktionen():
+    """Nur bekannte, widgetfreie Funktionen duerfen gecacht sein."""
+    import pathlib
+    import re
+
+    quelle = (pathlib.Path(__file__).parent / 'streamlit_app.py').read_text(
+        encoding='utf-8')
+    gecacht = re.findall(
+        r'@st\.cache_(?:resource|data)[^\n]*\ndef\s+(\w+)', quelle)
+
+    # init_firestore erzeugt nur einen Datenbank-Client, kein UI-Element.
+    erlaubt = {'init_firestore'}
+    unerwartet = set(gecacht) - erlaubt
+    assert not unerwartet, (
+        f"Neu gecachte Funktionen pruefen, ob sie Streamlit-Elemente "
+        f"erzeugen: {sorted(unerwartet)}")
