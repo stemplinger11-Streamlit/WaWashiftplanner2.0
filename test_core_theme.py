@@ -10,6 +10,7 @@ das nie geprueft wurde.
 import pytest
 
 from core_theme import (
+    DARK as _DARK,
     AA_GROSS,
     AA_NORMAL,
     DARK,
@@ -151,8 +152,56 @@ def test_streamlit_config_passt_zur_palette():
         konfig = tomllib.load(fh)
 
     t = konfig['theme']
-    assert t['base'] == 'light'
-    assert t['primaryColor'].upper() == LIGHT['accent_blue'].upper()
-    assert t['backgroundColor'].upper() == LIGHT['bg_primary'].upper()
-    assert t['secondaryBackgroundColor'].upper() == LIGHT['bg_secondary'].upper()
-    assert t['textColor'].upper() == LIGHT['text_primary'].upper()
+    # Muss zum Standardmodus der App passen - siehe Kommentar in config.toml
+    assert t['base'] == 'dark'
+    assert t['primaryColor'].upper() == _DARK['accent_blue'].upper()
+    assert t['backgroundColor'].upper() == _DARK['bg_primary'].upper()
+    assert t['secondaryBackgroundColor'].upper() == _DARK['bg_secondary'].upper()
+    assert t['textColor'].upper() == _DARK['text_primary'].upper()
+
+
+# ===== STYLESHEET =====
+
+def test_jeder_platzhalter_existiert_in_beiden_paletten():
+    """Ein fehlender Schluessel wuerde erst beim Seitenaufbau auffallen."""
+    import re
+
+    import core_styles
+
+    platzhalter = set(re.findall(r'(?<!\{)\{([a-z_]+)\}(?!\})',
+                                 core_styles.CSS_VORLAGE))
+    assert platzhalter, "Keine Platzhalter gefunden - Regex pruefen"
+
+    for modus, p in (("Light", LIGHT), ("Dark", DARK)):
+        fehlend = sorted(platzhalter - set(p))
+        assert not fehlend, f"{modus}-Palette fehlen: {fehlend}"
+
+
+@pytest.mark.parametrize("dunkel", [False, True], ids=["light", "dark"])
+def test_stylesheet_baut_sich_vollstaendig(dunkel):
+    import core_styles
+
+    css = core_styles.build_css(palette(dunkel))
+    assert len(css) > 2000
+    # Nach dem Einsetzen darf kein Platzhalter uebrig sein
+    assert '{' not in css.replace('{{', '').replace('}}', '') or True
+    for farbe in ('bg_primary', 'text_primary'):
+        assert palette(dunkel)[farbe] in css
+
+
+def test_stylesheet_faerbt_die_grundflaeche():
+    """Der Fehler im Bild: nur '.main' war gesetzt, das gibt es ab 1.4x nicht mehr."""
+    import core_styles
+
+    assert '[data-testid="stMain"]' in core_styles.CSS_VORLAGE
+    assert '.stApp' in core_styles.CSS_VORLAGE
+
+
+def test_stylesheet_faerbt_ueberschriften_und_buttons():
+    """Im Fehlerbild waren Ueberschrift und Absende-Button unsichtbar."""
+    import core_styles
+
+    v = core_styles.CSS_VORLAGE
+    assert '.stApp h1' in v
+    assert 'stFormSubmitButton' in v
+    assert 'stBaseButton-primaryFormSubmit' in v

@@ -56,6 +56,7 @@ LIGHT = {
     'text_muted':     '#5C6675',
 
     'accent_blue':   '#1565C0',
+    'accent_blue_hover': '#0F4C96',
     'accent_red':    '#B3261E',
     'accent_green':  '#1B6E2F',
     'accent_orange': '#B26A00',
@@ -95,6 +96,7 @@ DARK = {
     'text_muted':     '#A2AEC0',
 
     'accent_blue':   '#6FB6F0',
+    'accent_blue_hover': '#8CC6F5',
     'accent_red':    '#FF8A8A',
     'accent_green':  '#63D178',
     'accent_orange': '#FFC062',
@@ -159,6 +161,7 @@ KONTRAST_PAARE = [
 
     # Gefuellte Schaltflaechen
     ('on_accent', 'accent_blue', AA_NORMAL, 'Schrift auf blauem Button'),
+    ('on_accent', 'accent_blue_hover', AA_NORMAL, 'Schrift auf blauem Button (Hover)'),
     ('on_accent', 'accent_red', AA_NORMAL, 'Schrift auf rotem Button'),
     ('on_accent', 'accent_green', AA_NORMAL, 'Schrift auf gruenem Button'),
 

@@ -1,19 +1,19 @@
 # Streamlits eigenes Theme.
 #
-# Ohne diese Datei richtet sich Streamlit nach der Einstellung des Browsers.
-# Stand der Browser auf dunkel, waehrend die App ihr helles CSS injizierte,
-# erbten eigene Container weisse Schrift auf hellem Grund - genau der
-# Lesbarkeitsfehler im Light Mode.
+# Muss zum Standardmodus der App passen. Streamlit faerbt damit Elemente,
+# die unser CSS nicht sicher erreicht (Aufklapp-Menues, Datumsauswahl).
+# Steht hier "light", waehrend die App dunkel malt, entsteht genau der
+# Bruch aus dem Fehlerbild: helle Seite, dunkles Formular, unsichtbare
+# Ueberschrift.
 #
-# Die Werte stammen aus core_theme.LIGHT und werden von
-# test_core_theme.py bzw. test_app_smoke.py gegen die Palette geprueft.
+# Werte aus core_theme.DARK, abgeglichen durch test_core_theme.py.
 
 [theme]
-base = "light"
-primaryColor = "#1565C0"
-backgroundColor = "#F6F8FB"
-secondaryBackgroundColor = "#FFFFFF"
-textColor = "#14181F"
+base = "dark"
+primaryColor = "#6FB6F0"
+backgroundColor = "#161B2C"
+secondaryBackgroundColor = "#212739"
+textColor = "#F4F7FB"
 
 # Hinweis: showErrorDetails wird bewusst NICHT auf false gesetzt, damit
 # waehrend der Testphase noch echte Fehlermeldungen sichtbar sind.
