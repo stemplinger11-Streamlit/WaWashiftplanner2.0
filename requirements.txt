@@ -1,5 +1,7 @@
 # ===== CORE DEPENDENCIES =====
 streamlit==1.37.1
+# ===== PASSWORT-HASHING =====
+bcrypt==4.2.0
 # ===== ZEITZONEN =====
 pytz==2024.1
 python-dateutil==2.9.0.post0

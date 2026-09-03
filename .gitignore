@@ -3,6 +3,9 @@
 secrets.toml
 *serviceAccount*.json
 
+# Datenbank-Sicherungen (enthalten Passwort-Hashes!)
+backups/
+
 # Python
 __pycache__/
 *.py[cod]

@@ -5,7 +5,6 @@ Einstiegspunkt fuer Streamlit Community Cloud. Fachliche Regeln liegen in
 core_rules.py, damit sie ohne App und ohne Datenbank testbar sind.
 """
 import streamlit as st
-import hashlib
 import io
 import json
 import zipfile
@@ -32,6 +31,9 @@ from core_rules import (
     DEFAULT_PAUSE_END,
     DEFAULT_CANCEL_DEADLINE_HOURS,
 )
+# Passwort-Hashing inkl. stiller Migration der Bestandsnutzer,
+# abgedeckt durch test_core_auth.py.
+from core_auth import hash_pw, pw_pruefen
 
 # ===== PAGE CONFIG =====
 st.set_page_config(
@@ -91,9 +93,6 @@ def init_firestore():
 db = init_firestore()
 
 # ===== HELPER FUNCTIONS =====
-def hash_pw(pw):
-    return hashlib.sha256(pw.encode()).hexdigest()
-
 def week_start(d=None):
     d = d or datetime.now().date()
     if hasattr(d, "date"):
@@ -766,8 +765,18 @@ class WasserwachtDB:
         u = self.get_user(email)
         if not u:
             return False, None, 'unknown'
-        if u.get('password_hash') != hash_pw(password):
+
+        korrekt, neuer_hash = pw_pruefen(password, u.get('password_hash'))
+        if not korrekt:
             return False, None, 'credentials'
+
+        # Bestandsnutzer still auf das neue Verfahren heben. Schlaegt das
+        # Schreiben fehl, bleibt der alte Hash gueltig - die Anmeldung
+        # funktioniert trotzdem.
+        if neuer_hash:
+            if self.update_user(u['id'], password_hash=neuer_hash):
+                u['password_hash'] = neuer_hash
+                print(f"🔐 Passwort-Hash migriert: {email}")
         # Bestandsnutzer ohne 'active'-Feld gelten als aktiv
         if not u.get('active', True):
             return False, None, 'pending' if u.get('pending_approval') else 'disabled'
@@ -924,6 +933,51 @@ class WasserwachtDB:
             print(f"❌ cancel_booking Fehler: {e}")
             return False
     
+    def get_bookings_between(self, von, bis, status='confirmed'):
+        """Alle Buchungen eines Zeitraums mit EINER Abfrage.
+
+        Ersetzt Schleifen, die je Slot bzw. je Nutzer einzeln abgefragt haben -
+        auf dem Firestore-Free-Tier zaehlt jeder Lesezugriff.
+        """
+        try:
+            q = self.db.collection('bookings')
+            if status:
+                q = q.where('status', '==', status)
+            result = []
+            for doc in q.where('slot_date', '>=', von).where('slot_date', '<=', bis).stream():
+                data = doc.to_dict()
+                data['id'] = doc.id
+                result.append(data)
+            return result
+        except Exception as e:
+            print(f"⚠️ get_bookings_between Fallback: {e}")
+            # Ohne passenden Composite-Index: einmal laden und im Speicher filtern
+            try:
+                result = []
+                for doc in self.db.collection('bookings').stream():
+                    b = doc.to_dict()
+                    if status and b.get('status') != status:
+                        continue
+                    if von <= b.get('slot_date', '') <= bis:
+                        b['id'] = doc.id
+                        result.append(b)
+                return result
+            except Exception as e2:
+                print(f"❌ get_bookings_between Fehler: {e2}")
+                return []
+
+    def count_bookings_per_user(self):
+        """Buchungen je E-Mail-Adresse mit EINER Abfrage -> Counter."""
+        try:
+            return Counter(
+                doc.to_dict().get('user_email')
+                for doc in self.db.collection('bookings')
+                .where('status', '==', 'confirmed').stream()
+            )
+        except Exception as e:
+            print(f"❌ count_bookings_per_user Fehler: {e}")
+            return Counter()
+
     def restore_booking(self, bid):
         """Macht eine Stornierung rueckgaengig (Rollback bei fehlgeschlagener Umbuchung)."""
         try:
@@ -2011,9 +2065,17 @@ def profil_page():
             
             if submit:
                 # Validierung
+                # Der Vergleich muss ueber pw_pruefen laufen: bcrypt erzeugt
+                # bei jedem Aufruf einen neuen Salt, ein direkter Hash-
+                # Vergleich koennte daher nie uebereinstimmen.
+                altes_pw_korrekt = (
+                    pw_pruefen(old_password, user.get('password_hash'))[0]
+                    if old_password else False
+                )
+
                 if not old_password or not new_password or not new_password_confirm:
                     st.error("❌ Bitte alle Felder ausfüllen!")
-                elif hash_pw(old_password) != user.get('password_hash'):
+                elif not altes_pw_korrekt:
                     st.error("❌ Aktuelles Passwort ist falsch!")
                 elif new_password != new_password_confirm:
                     st.error("❌ Neue Passwörter stimmen nicht überein!")
@@ -2022,16 +2084,18 @@ def profil_page():
                 elif old_password == new_password:
                     st.error("❌ Neues Passwort muss sich vom alten unterscheiden!")
                 else:
-                    # Passwort ändern
+                    # Genau einmal hashen - sonst enthielte die Session einen
+                    # anderen Hash als die Datenbank.
+                    neuer_hash = hash_pw(new_password)
                     success = ww_db.update_user(
                         user['id'],
-                        password_hash=hash_pw(new_password)
+                        password_hash=neuer_hash
                     )
-                    
+
                     if success:
                         # Session aktualisieren
-                        st.session_state.user['password_hash'] = hash_pw(new_password)
-                        
+                        st.session_state.user['password_hash'] = neuer_hash
+
                         st.success("✅ Passwort erfolgreich geändert!")
                         st.balloons()
                     else:
@@ -2162,7 +2226,15 @@ def verwaltung_page():
         
         all_slots = []
         current_week = week_start(today)
-        
+
+        # Alle Buchungen des Zeitraums mit einer Abfrage laden, statt je Slot
+        # einzeln nachzuschlagen.
+        zeitraum_ende = (current_week + timedelta(days=7 * weeks_ahead)).strftime('%Y-%m-%d')
+        belegte_slots = {
+            (b.get('slot_date'), b.get('slot_time'))
+            for b in ww_db.get_bookings_between(today.strftime('%Y-%m-%d'), zeitraum_ende)
+        }
+
         for week_offset in range(weeks_ahead):
             ws = current_week + timedelta(days=7 * week_offset)
             
@@ -2177,9 +2249,8 @@ def verwaltung_page():
                     continue
                 
                 slot_time = f"{slot_config['start']} - {slot_config['end']}"
-                booking = ww_db.get_booking(slot_d, slot_time)
-                
-                if not booking:
+
+                if (slot_d, slot_time) not in belegte_slots:
                     days_until = (slot_date_obj - today).days
                     
                     if days_until < 7:
@@ -2350,15 +2421,21 @@ Details:
                     with col2:
                         # Verfügbare Slots für diese Woche
                         available_slots = []
+                        # Buchungen der Woche einmal laden statt je Slot
+                        woche_buchungen = {
+                            (b.get('slot_date'), b.get('slot_time')): b
+                            for b in ww_db.get_week_bookings(
+                                selected_week.strftime('%Y-%m-%d'))
+                        }
                         for slot_config in WEEKLY_SLOTS:
                             slot_d = slot_date(selected_week, slot_config['day'])
                             slot_date_obj = datetime.strptime(slot_d, '%Y-%m-%d').date()
-                            
+
                             if slot_date_obj < today:
                                 continue
-                            
+
                             slot_time = f"{slot_config['start']} - {slot_config['end']}"
-                            booking = ww_db.get_booking(slot_d, slot_time)
+                            booking = woche_buchungen.get((slot_d, slot_time))
                             blocked = is_blocked(slot_d)
                             
                             label = f"{slot_config['day_name']} {fmt_de(slot_d)} | {slot_time}"
@@ -2693,6 +2770,8 @@ def benutzer_page():
     
     users = ww_db.get_all_users()
     pending = ww_db.get_pending_users()
+    # Eine Abfrage statt einer je Nutzer (vorher N+1 bei jedem Rerun)
+    buchungen_je_nutzer = ww_db.count_bookings_per_user()
 
     # Ein zuletzt zurueckgesetztes Passwort ueberlebt den Rerun, damit der
     # Admin es notieren kann - bisher wurde es sofort wieder weggeblendet.
@@ -2777,9 +2856,7 @@ def benutzer_page():
                     st.caption(f"📧 {u.get('email', 'N/A')} | 📱 {u.get('phone', '-')}")
                 
                 with col2:
-                    # Statistik
-                    bookings = ww_db.get_user_bookings(u.get('email'), future_only=False)
-                    st.metric("Buchungen", len(bookings))
+                    st.metric("Buchungen", buchungen_je_nutzer.get(u.get('email'), 0))
                 
                 with col3:
                     # Schutz vor Selbst-Aussperrung: Der angemeldete Admin darf

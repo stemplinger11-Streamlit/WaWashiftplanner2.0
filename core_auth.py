@@ -1,0 +1,83 @@
+"""
+Passwort-Hashing mit sanfter Migration.
+
+Bis V8.1 wurden Passwoerter als ungesalzener SHA-256 gespeichert - anfaellig
+fuer Rainbow-Table-Angriffe. Neue und geaenderte Passwoerter werden jetzt mit
+bcrypt gehasht.
+
+Bestandsnutzer duerfen dabei nichts verlieren: Ihre Klartext-Passwoerter sind
+nicht bekannt, ein Rehash im Voraus ist also unmoeglich. Stattdessen wird beim
+naechsten erfolgreichen Login geprueft, ob der gespeicherte Hash noch das alte
+Verfahren nutzt - wenn ja, wird er im selben Moment transparent auf bcrypt
+umgestellt. Der Nutzer merkt davon nichts und muss nichts tun.
+
+Bewusst frei von Streamlit- und Firestore-Abhaengigkeiten, damit die Logik
+ohne App und ohne Datenbank testbar ist.
+"""
+import hashlib
+
+try:
+    import bcrypt
+    BCRYPT_VERFUEGBAR = True
+except ImportError:  # pragma: no cover
+    bcrypt = None
+    BCRYPT_VERFUEGBAR = False
+
+# Kostenfaktor. 12 ist ein gaengiger Kompromiss aus Sicherheit und Wartezeit.
+BCRYPT_ROUNDS = 12
+
+
+def hash_pw_legacy(pw):
+    """Altes Verfahren aus V8.1 - nur noch zum Pruefen von Bestandshashes."""
+    return hashlib.sha256(pw.encode()).hexdigest()
+
+
+def ist_legacy_hash(hash_wert):
+    """Stammt der Hash aus dem alten SHA-256-Verfahren?
+
+    SHA-256 liefert 64 Hex-Zeichen; bcrypt-Hashes beginnen mit '$2'.
+    """
+    if not hash_wert or not isinstance(hash_wert, str):
+        return False
+    if hash_wert.startswith('$2'):
+        return False
+    return len(hash_wert) == 64 and all(c in '0123456789abcdef' for c in hash_wert.lower())
+
+
+def hash_pw(pw):
+    """Neues Passwort hashen - bcrypt, sofern verfuegbar."""
+    if not BCRYPT_VERFUEGBAR:
+        # Ohne bcrypt bleibt das Altverfahren die einzige Option. Die App
+        # laeuft weiter, statt beim Start auszufallen.
+        return hash_pw_legacy(pw)
+    return bcrypt.hashpw(pw.encode('utf-8'),
+                         bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode('utf-8')
+
+
+def pw_pruefen(pw, gespeicherter_hash):
+    """Passwort gegen den gespeicherten Hash pruefen -> (korrekt, neuer_hash)
+
+    'neuer_hash' ist gesetzt, wenn der Hash auf bcrypt umgestellt werden sollte
+    (also nur beim ersten erfolgreichen Login eines Bestandsnutzers).
+    Der Aufrufer schreibt ihn dann in die Datenbank.
+    """
+    if not gespeicherter_hash or pw is None:
+        return False, None
+
+    if ist_legacy_hash(gespeicherter_hash):
+        if hash_pw_legacy(pw) != gespeicherter_hash:
+            return False, None
+        # Passwort stimmt - Gelegenheit zum stillen Upgrade
+        if BCRYPT_VERFUEGBAR:
+            return True, hash_pw(pw)
+        return True, None
+
+    if not BCRYPT_VERFUEGBAR:  # pragma: no cover
+        return False, None
+
+    try:
+        korrekt = bcrypt.checkpw(pw.encode('utf-8'),
+                                 gespeicherter_hash.encode('utf-8'))
+    except (ValueError, TypeError):
+        return False, None
+    return korrekt, None
