@@ -26,6 +26,7 @@ from collections import Counter
 # Fachliche Regeln (Feiertage, Saisonpause, Stornofrist) liegen in
 # core_rules.py und sind durch test_core_rules.py abgedeckt.
 import core_rules as rules
+import core_theme as theme
 from core_rules import (
     DEFAULT_PAUSE_START,
     DEFAULT_PAUSE_END,
@@ -200,74 +201,48 @@ def wants_sms(user, event):
 
 # ===== CSS INJECTION (PROFESSIONELLES DESIGN) =====
 def inject_css(dark=False):
+    """Farben und Layout der App.
+
+    Die Farbwerte liegen in core_theme.py und werden von test_core_theme.py
+    gegen WCAG AA geprueft. Wichtig: Jeder eigene Container bekommt hier eine
+    ausdrueckliche Textfarbe. Fehlte sie, erbte der Text Streamlits eigenes
+    Theme - bei dunkel eingestelltem Browser stand dann weisse Schrift auf
+    unserem hellen Kartenhintergrund.
     """
-    Modernes, mobile-optimiertes Design mit perfekter Lesbarkeit
-    Inspiriert von Material Design 3 & Apple HIG
-    Alle Fixes: Sidebar-Toggle, Dropdowns, Inputs, Slot-Cards
-    """
-    if dark:
-        # ===== DARK MODE - Dunkles Blau, nicht zu dunkel =====
-        bg_primary = "#1A1F35"      # Dunkles Blau (statt #121212)
-        bg_secondary = "#242B42"    # Heller für Cards
-        bg_surface = "#2D3548"      # Noch heller für erhobene Elemente
-        bg_elevated = "#363D52"     # Input-Hintergrund
-        
-        text_primary = "#FFFFFF"
-        text_secondary = "#B8C5D6"
-        text_muted = "#8897AA"
-        
-        accent_blue = "#5EB0EF"     # Helles Blau für gute Sichtbarkeit
-        accent_red = "#FF6B6B"      # Helleres Rot
-        accent_green = "#51CF66"    # Helleres Grün
-        accent_orange = "#FFB84D"   # Helleres Orange
-        
-        border_color = "#3D4563"
-        divider_color = "#4A5568"
-        
-        # Slot-Cards - MEHR KONTRAST
-        slot_free_bg = "#2A4A6F"        # Helleres Blau
-        slot_free_border = "#5EB0EF"    
-        slot_booked_bg = "#4A3520"      # Helleres Braun
-        slot_booked_border = "#FFB84D"  
-        slot_blocked_bg = "#3A3A3A"     # Helleres Grau
-        slot_blocked_border = "#666666" 
-        
-        # Shadows für Tiefe
-        input_shadow = "0 2px 8px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.05)"
-        card_shadow = "0 4px 12px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.2)"
-        card_shadow_hover = "0 8px 16px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3)"
-        
-    else:
-        # ===== LIGHT MODE - Klar und hell =====
-        bg_primary = "#FAFAFA"
-        bg_secondary = "#FFFFFF"
-        bg_surface = "#F5F5F5"
-        bg_elevated = "#FFFFFF"
-        
-        text_primary = "#1A1A1A"
-        text_secondary = "#666666"
-        text_muted = "#999999"
-        
-        accent_blue = "#1976D2"
-        accent_red = "#C62828"
-        accent_green = "#2E7D32"
-        accent_orange = "#ED6C02"
-        
-        border_color = "#E0E0E0"
-        divider_color = "#BDBDBD"
-        
-        # Slot-Cards
-        slot_free_bg = "#E3F2FD"
-        slot_free_border = "#1976D2"
-        slot_booked_bg = "#FFF3E0"
-        slot_booked_border = "#ED6C02"
-        slot_blocked_bg = "#F5F5F5"
-        slot_blocked_border = "#9E9E9E"
-        
-        # Shadows
-        input_shadow = "0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.05)"
-        card_shadow = "0 2px 4px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06)"
-        card_shadow_hover = "0 4px 8px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.1)"
+    farben = theme.palette(dark)
+
+    bg_primary = farben['bg_primary']
+    bg_secondary = farben['bg_secondary']
+    bg_surface = farben['bg_surface']
+    bg_elevated = farben['bg_elevated']
+
+    text_primary = farben['text_primary']
+    text_secondary = farben['text_secondary']
+    text_muted = farben['text_muted']
+
+    accent_blue = farben['accent_blue']
+    accent_red = farben['accent_red']
+    accent_green = farben['accent_green']
+    accent_orange = farben['accent_orange']
+
+    accent_blue_text = farben['accent_blue_text']
+    accent_orange_text = farben['accent_orange_text']
+
+    on_accent = farben['on_accent']
+
+    border_color = farben['border_color']
+    divider_color = farben['divider_color']
+
+    slot_free_bg = farben['slot_free_bg']
+    slot_free_border = farben['slot_free_border']
+    slot_booked_bg = farben['slot_booked_bg']
+    slot_booked_border = farben['slot_booked_border']
+    slot_blocked_bg = farben['slot_blocked_bg']
+    slot_blocked_border = farben['slot_blocked_border']
+
+    input_shadow = farben['input_shadow']
+    card_shadow = farben['card_shadow']
+    card_shadow_hover = farben['card_shadow_hover']
 
     st.markdown(f"""
     <style>
@@ -313,13 +288,13 @@ def inject_css(dark=False):
         background-color: {accent_blue} !important;
         border-color: {accent_blue} !important;
         transform: translateX(3px) !important;
-        color: #FFFFFF !important;
+        color: {on_accent} !important;
     }}
     
     /* ===== SIDEBAR TOGGLE BUTTON FIX ===== */
     button[kind="header"] {{
         background-color: {accent_blue} !important;
-        color: white !important;
+        color: {on_accent} !important;
         border: none !important;
         border-radius: 8px !important;
         padding: 0.5rem !important;
@@ -333,19 +308,19 @@ def inject_css(dark=False):
     /* Streamlit Sidebar Toggle (alternative Selector) */
     [data-testid="collapsedControl"] {{
         background-color: {accent_blue} !important;
-        color: white !important;
+        color: {on_accent} !important;
         border-radius: 8px !important;
     }}
     
     [data-testid="collapsedControl"] svg {{
-        color: white !important;
-        fill: white !important;
+        color: {on_accent} !important;
+        fill: {on_accent} !important;
     }}
     
     /* ===== BUTTONS - KLARE SICHTBARKEIT ===== */
     .stButton button {{
         background: linear-gradient(135deg, {accent_blue} 0%, {accent_blue}DD 100%) !important;
-        color: white !important;
+        color: {on_accent} !important;
         border: none !important;
         border-radius: 10px !important;
         padding: 0.65rem 1.5rem !important;
@@ -464,7 +439,7 @@ def inject_css(dark=False):
     
     .stTabs [aria-selected="true"] {{
         background-color: {accent_blue} !important;
-        color: white !important;
+        color: {on_accent} !important;
         font-weight: 600 !important;
         box-shadow: {card_shadow} !important;
     }}
@@ -511,12 +486,30 @@ def inject_css(dark=False):
     /* ===== SLOT CARDS - MOBILE-OPTIMIERT MIT MEHR KONTRAST ===== */
     .slot-card {{
         background-color: {bg_secondary} !important;
+        /* Ausdrueckliche Textfarbe: ohne sie erbte der Text Streamlits
+           eigenes Theme und wurde bei dunkel eingestelltem Browser weiss
+           auf hellem Grund. */
+        color: {text_primary} !important;
         border: 2px solid {border_color} !important;
         border-radius: 12px !important;
         padding: 1rem !important;
         margin: 0.6rem 0 !important;
         transition: all 0.25s ease !important;
         box-shadow: {card_shadow} !important;
+    }}
+
+    /* Gilt auch fuer alles, was in der Karte steckt */
+    .slot-card, .slot-card * {{
+        color: {text_primary} !important;
+    }}
+
+    .slot-card h3 {{
+        color: {text_primary} !important;
+        margin: 0 !important;
+    }}
+
+    .slot-card p {{
+        color: {text_secondary} !important;
     }}
     
     .slot-card:hover {{
@@ -556,18 +549,24 @@ def inject_css(dark=False):
     }}
     
     .status-badge.free {{
-        background-color: {accent_blue}25;
-        color: {accent_blue};
-        border: 1.5px solid {accent_blue};
+        background-color: transparent;
+        color: {accent_blue_text} !important;
+        border: 1.5px solid {slot_free_border};
     }}
-    
+
     .status-badge.booked {{
-        background-color: {accent_orange}25;
-        color: {accent_orange};
-        border: 1.5px solid {accent_orange};
+        background-color: transparent;
+        color: {accent_orange_text} !important;
+        border: 1.5px solid {slot_booked_border};
     }}
     
     .status-badge.blocked {{
+        background-color: transparent;
+        color: {text_secondary} !important;
+        border: 1.5px solid {slot_blocked_border};
+    }}
+
+    .status-badge.blocked-alt {{
         background-color: {text_muted}25;
         color: {text_muted};
         border: 1.5px solid {text_muted};
