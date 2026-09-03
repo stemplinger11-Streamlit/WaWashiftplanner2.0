@@ -4,7 +4,7 @@ Stand: 02.09.2026 · Basis: `streamlit_app.py` V9.0
 
 **Erledigt:** P0 1–6, P1 8–15, P2 16, 17, 18, P3 20, 21, 22, 23, 24, 26.
 **Offen:** P1 7 (Erinnerungen: gebaut, Zeitplan noch deaktiviert),
-P2 19 (Session-Persistenz), P3 25 (Modularisierung).
+P2 19 (Session-Persistenz), P3 25 (Modularisierung), 27 (Doppelbuchung).
 
 **Tests:** 79, laufen ohne Firebase und ohne Streamlit (`python -m pytest -q`).
 
@@ -155,6 +155,25 @@ Auf dem Firestore-Free-Tier zählt jeder Read gegen das Kontingent. Besser: einm
 
 ### ✅ 26. Repo-Hygiene
 Es fehlen `.gitignore` (u. a. `.streamlit/secrets.toml` ausschließen!), `README.md` mit Setup-Anleitung und eine `secrets.toml.example` als Vorlage ohne echte Werte.
+
+---
+
+### 27. Doppelbuchung bei gleichzeitigem Klick möglich
+
+`create_booking()` prüft mit `get_booking()`, ob der Slot frei ist, und legt
+dann an — zwei getrennte Schritte ohne Transaktion. Klicken zwei Nutzer im
+selben Moment, können beide eine Buchung für denselben Slot erhalten; im
+Kalender erscheint dann nur eine, die andere Person hält sich aber ebenfalls
+für eingeteilt.
+
+Wahrscheinlichkeit ist gering (drei Slots pro Woche, überschaubarer Kreis),
+die Folge aber ärgerlich. **Bewusst nicht kurz vor Saisonstart geändert**, weil
+der Buchungspfad ohne laufende Datenbank nicht erprobt werden kann.
+
+→ **Lösung:** Firestore-Transaktion, oder sauberer: die Dokument-ID aus
+`slot_date` + `slot_time` bilden und mit `create()` anlegen — das schlägt
+serverseitig fehl, wenn das Dokument schon existiert. Letzteres erfordert eine
+Migration der Bestandsbuchungen auf die neuen IDs.
 
 ---
 
