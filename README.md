@@ -28,8 +28,12 @@ sie ohne laufende App und ohne Datenbankzugriff geprüft werden können.
 
 ## Lokal starten
 
+Getestet mit **Python 3.14** – der Version, die Streamlit Community Cloud
+verwendet. Weichen lokale und deployte Version ab, fallen fehlende Wheels
+erst beim Deploy auf.
+
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 cp .streamlit/secrets.toml.example .streamlit/secrets.toml
 # secrets.toml ausfüllen, dann:
 streamlit run streamlit_app.py
@@ -41,7 +45,10 @@ streamlit run streamlit_app.py
 python -m pytest -q
 ```
 
-Die Tests brauchen weder Firebase noch Streamlit.
+Die Regeltests (`test_core_*.py`) brauchen weder Firebase noch Streamlit.
+`test_app_smoke.py` lädt zusätzlich die ganze App gegen die echten
+Paketversionen – mit Attrappen statt Datenbank – und deckt damit
+Paket- und API-Brüche vor dem Deploy auf.
 
 ---
 

@@ -1,0 +1,4 @@
+# Nur fuer lokale Entwicklung und CI - nicht auf Streamlit Cloud noetig.
+-r requirements.txt
+pytest==8.3.3
+pyflakes==3.2.0

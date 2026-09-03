@@ -34,10 +34,10 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Abhängigkeiten installieren
-        run: pip install google-cloud-firestore twilio
+        run: pip install google-cloud-firestore==2.29.0 twilio==9.11.0
 
       - name: Erinnerungen versenden
         env:

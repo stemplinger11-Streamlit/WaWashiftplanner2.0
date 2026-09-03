@@ -14,12 +14,15 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          # Gleiche Version wie Streamlit Community Cloud. Weicht sie ab,
+          # faellt ein fehlendes Wheel erst beim Deploy auf.
+          python-version: "3.14"
 
       - name: Abhängigkeiten installieren
-        # Nur was die Tests brauchen - sie kommen ohne Streamlit
-        # und ohne Firestore aus.
-        run: pip install pytest pytz bcrypt pyflakes
+        # Vollstaendig, damit der Ladetest (test_app_smoke.py) die App
+        # gegen die echten Paketversionen prueft - genau das haette den
+        # gescheiterten Deploy vorher aufgedeckt.
+        run: pip install -r requirements-dev.txt
 
       - name: Tests
         run: python -m pytest -q
