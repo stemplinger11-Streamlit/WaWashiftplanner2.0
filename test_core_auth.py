@@ -182,3 +182,94 @@ def test_gemischte_zeitzonen_sperren_niemanden_aus():
     """Ein Vergleichsfehler darf nicht zur Abmeldung fuehren."""
     mit_zone = datetime(2026, 9, 15, 10, 0, 0, tzinfo=timezone.utc)
     assert not session_abgelaufen(mit_zone, jetzt=JETZT)
+
+
+# ===== ANGEMELDET BLEIBEN =====
+
+from datetime import timezone  # noqa: E402
+
+from core_auth import (  # noqa: E402
+    DEFAULT_REMEMBER_DAYS,
+    SESSION_COOKIE_NAME,
+    neues_session_token,
+    session_datensatz_gueltig,
+    session_eintrag,
+    token_hash,
+)
+
+UTC_JETZT = datetime(2026, 9, 15, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def test_cookie_name_ist_gesetzt():
+    assert SESSION_COOKIE_NAME
+
+
+def test_token_ist_lang_genug():
+    assert len(neues_session_token()) >= 32
+
+
+def test_tokens_sind_verschieden():
+    assert len({neues_session_token() for _ in range(50)}) == 50
+
+
+def test_token_hash_ist_deterministisch():
+    t = neues_session_token()
+    assert token_hash(t) == token_hash(t)
+
+
+def test_verschiedene_tokens_verschiedene_hashes():
+    assert token_hash("a") != token_hash("b")
+
+
+def test_hash_gibt_token_nicht_preis():
+    """Aus der Datenbank darf sich niemand anmelden koennen."""
+    t = neues_session_token()
+    assert t not in token_hash(t)
+
+
+@pytest.mark.parametrize("wert", [None, ""])
+def test_token_hash_ohne_token(wert):
+    assert token_hash(wert) is None
+
+
+def test_neue_sitzung_ist_gueltig():
+    _, satz = session_eintrag("u1", jetzt=UTC_JETZT)
+    assert session_datensatz_gueltig(satz, jetzt=UTC_JETZT)
+
+
+def test_sitzung_enthaelt_nutzer():
+    _, satz = session_eintrag("u1", jetzt=UTC_JETZT)
+    assert satz['user_id'] == "u1"
+
+
+def test_sitzung_laeuft_nach_der_frist_ab():
+    _, satz = session_eintrag("u1", tage=30, jetzt=UTC_JETZT)
+    spaeter = UTC_JETZT + timedelta(days=31)
+    assert not session_datensatz_gueltig(satz, jetzt=spaeter)
+
+
+def test_sitzung_gilt_kurz_vor_ablauf_noch():
+    _, satz = session_eintrag("u1", tage=30, jetzt=UTC_JETZT)
+    fast = UTC_JETZT + timedelta(days=29, hours=23)
+    assert session_datensatz_gueltig(satz, jetzt=fast)
+
+
+def test_standarddauer_ist_30_tage():
+    assert DEFAULT_REMEMBER_DAYS == 30
+
+
+@pytest.mark.parametrize("satz", [
+    None, {}, {'expires_at': '2027-01-01T00:00:00+00:00'},   # ohne user_id
+    {'user_id': 'u1'},                                        # ohne Ablauf
+    {'user_id': 'u1', 'expires_at': 'kaputt'},
+    {'user_id': 'u1', 'expires_at': None},
+])
+def test_unbrauchbare_sitzung_gilt_nicht(satz):
+    """Im Zweifel keine Anmeldung."""
+    assert not session_datensatz_gueltig(satz, jetzt=UTC_JETZT)
+
+
+def test_zeitstempel_ohne_zeitzone_wird_angenommen():
+    """Firestore kann Zeitangaben ohne Zone zurueckgeben."""
+    satz = {'user_id': 'u1', 'expires_at': '2026-10-15T12:00:00'}
+    assert session_datensatz_gueltig(satz, jetzt=UTC_JETZT)

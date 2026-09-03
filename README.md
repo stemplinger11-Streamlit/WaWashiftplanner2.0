@@ -135,7 +135,10 @@ sie liegen in der Collection `settings` und brauchen keine Codeänderung:
   stornieren dürfen. Standard: 12. Administratoren sind ausgenommen.
 - **Organisationsname** – erscheint in allen Nachrichten als `{org_name}`.
 - **Automatische Abmeldung** – Minuten ohne Aktivität, bis die Sitzung
-  endet. Standard: 60. `0` schaltet die Abmeldung ab.
+  endet. Standard: 60. `0` schaltet die Abmeldung ab. Gilt nicht, wenn
+  „Angemeldet bleiben" gewählt wurde.
+- **Angemeldet bleiben** – Tage, die eine Anmeldung auf dem Gerät gültig
+  bleibt. Standard: 30. `0` schaltet die Funktion ab.
 - **Dark Mode** – globale Voreinstellung.
 
 Die Texte aller E-Mails und SMS lassen sich unter *Vorlagen* bearbeiten.
@@ -143,6 +146,24 @@ Die Texte aller E-Mails und SMS lassen sich unter *Vorlagen* bearbeiten.
 Feste Werte im Code: die drei Wochenslots (`WEEKLY_SLOTS` in
 `streamlit_app.py`). Die bayerischen Feiertage werden berechnet und müssen
 nicht gepflegt werden.
+
+---
+
+## Angemeldet bleiben
+
+Beim Login lässt sich „Angemeldet bleiben" wählen. Der Browser erhält dann
+ein Cookie mit einem Zufallstoken; in Firestore (`sessions`) liegt nur
+dessen SHA-256-Hash – wer die Datenbank liest, kann sich damit nicht
+anmelden. Ein Reload oder das erneute Öffnen des Tabs meldet dann nicht
+mehr ab.
+
+Bestehende Anmeldungen werden automatisch beendet bei Passwortwechsel,
+Passwort-Reset durch einen Admin und Deaktivierung des Kontos.
+
+Streamlit kann Cookies nur lesen (`st.context.cookies`), nicht setzen –
+daher die Komponente `extra-streamlit-components`. Jeder Cookie-Zugriff ist
+abgesichert: Fällt die Komponente aus, funktioniert die normale Anmeldung
+unverändert weiter.
 
 ---
 

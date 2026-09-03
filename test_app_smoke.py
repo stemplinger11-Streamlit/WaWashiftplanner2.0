@@ -130,3 +130,29 @@ def test_firestore_where_weiterhin_nutzbar():
         pytest.skip("Firestore ist in diesem Lauf durch eine Attrappe ersetzt")
     assert hasattr(echtes_firestore, 'SERVER_TIMESTAMP')
     assert hasattr(echtes_firestore, 'DELETE_FIELD')
+
+
+# ===== ANGEMELDET BLEIBEN =====
+
+def test_cookie_funktionen_vorhanden(app):
+    for name in ['get_cookie_manager', 'cookie_lesen', 'cookie_setzen',
+                 'cookie_loeschen', 'get_remember_days',
+                 'sitzung_aus_cookie_wiederherstellen']:
+        assert callable(getattr(app, name, None)), f"{name} fehlt"
+
+
+def test_datenbank_kann_dauersitzungen(app):
+    for name in ['create_session', 'get_session_user', 'delete_session',
+                 'delete_sessions_of_user']:
+        assert callable(getattr(app.WasserwachtDB, name, None)), f"{name} fehlt"
+
+
+def test_cookie_fehler_sperrt_niemanden_aus(app, monkeypatch):
+    """Faellt das Cookie-Handling aus, muss der normale Login weiter gehen."""
+    def kaputt(*a, **kw):
+        raise RuntimeError("Komponente nicht erreichbar")
+    monkeypatch.setattr(app, 'get_cookie_manager', kaputt)
+
+    assert app.cookie_lesen('irgendwas') is None
+    assert app.cookie_setzen('a', 'b', 30) is False
+    assert app.cookie_loeschen('a') is False

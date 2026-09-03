@@ -4,10 +4,9 @@ Stand: 02.09.2026 · Basis: `streamlit_app.py` V9.0
 
 **Erledigt:** P0 1–6, P1 8–15, P2 16, 17, 18, P3 20, 21, 22, 23, 24, 26.
 **Offen:** P1 7 (Erinnerungen: gebaut, Zeitplan noch deaktiviert),
-P2 19 (nur noch das Angemeldetbleiben; Timeout ist erledigt),
 P3 25 (Modularisierung), 27 (Doppelbuchung).
 
-**Tests:** 90, laufen ohne Firebase und ohne Streamlit (`python -m pytest -q`).
+**Tests:** 195, laufen ohne Firebase und ohne Streamlit (`python -m pytest -q`).
 
 ---
 
@@ -124,7 +123,7 @@ Jeder mit der URL kann sich einen Account anlegen und sofort Schichten buchen �
 
 → **Klärungsbedarf:** Ist das gewollt (interner Link im Verein) oder soll eine Freigabe durch den Admin dazwischen?
 
-### 🔸 19. Keine Session-Persistenz / kein Timeout
+### ✅ 19. Keine Session-Persistenz / kein Timeout
 Login liegt ausschließlich im `st.session_state`. Ein Browser-Reload loggt aus (schlechte UX), gleichzeitig gibt es kein Timeout bei Inaktivität.
 
 **Timeout: erledigt.** Abmeldung nach 60 Minuten ohne Aktivität, unter
@@ -132,11 +131,9 @@ Verwaltung → Einstellungen zwischen 0 (aus) und 1440 Minuten einstellbar.
 Der Nutzer bekommt beim nächsten Aufruf einen Hinweis statt eines wortlosen
 Logins.
 
-**Angemeldetbleiben: offen.** Dafür muss ein Cookie im Browser gesetzt werden;
-Streamlit 1.37 kann das nicht von sich aus. Empfohlener Weg: Upgrade auf
-Streamlit ≥ 1.42 (bringt `st.context.cookies` mit) statt eines
-Drittanbieter-Pakets. Sollte erst umgesetzt werden, wenn eine Testumgebung
-existiert – ein Fehler im Anmeldeweg sperrt alle aus.
+**Angemeldetbleiben: erledigt.** Über `extra-streamlit-components`, da
+`st.context.cookies` auch in Streamlit 1.63 nur lesbar ist. Token im Cookie,
+nur der Hash in Firestore; Dauer in den Einstellungen pflegbar.
 
 ---
 

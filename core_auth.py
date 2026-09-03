@@ -107,3 +107,65 @@ def pw_pruefen(pw, gespeicherter_hash):
     except (ValueError, TypeError):
         return False, None
     return korrekt, None
+
+
+# ===== ANGEMELDET BLEIBEN =====
+# Der Browser bekommt ein Cookie mit einem Zufallstoken. In der Datenbank
+# liegt nur dessen Hash - wer die Datenbank liest, kann sich damit nicht
+# anmelden. Dasselbe Prinzip wie bei Passwoertern.
+
+SESSION_COOKIE_NAME = 'wawa_dienstplan_session'
+DEFAULT_REMEMBER_DAYS = 30
+
+
+def neues_session_token():
+    """Kryptografisch sicheres Token fuer das Cookie."""
+    import secrets
+    return secrets.token_urlsafe(32)
+
+
+def token_hash(token):
+    """Nur der Hash wird gespeichert."""
+    if not token:
+        return None
+    return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+
+def session_eintrag(user_id, tage=DEFAULT_REMEMBER_DAYS, jetzt=None):
+    """Erzeugt (token, datensatz) fuer eine neue Dauersitzung.
+
+    Zeiten als ISO-Text in UTC, damit der Vergleich unabhaengig davon
+    funktioniert, wie Firestore Zeitstempel zurueckgibt.
+    """
+    from datetime import timedelta, timezone
+    jetzt = jetzt or datetime.now(timezone.utc)
+    token = neues_session_token()
+    return token, {
+        'user_id': user_id,
+        'expires_at': (jetzt + timedelta(days=tage)).isoformat(),
+        'created_at': jetzt.isoformat(),
+    }
+
+
+def session_datensatz_gueltig(datensatz, jetzt=None):
+    """Ist die gespeicherte Dauersitzung noch gueltig?
+
+    Im Zweifel False: eine unlesbare Angabe darf keine Anmeldung erlauben.
+    """
+    from datetime import timezone
+    if not datensatz or not datensatz.get('user_id'):
+        return False
+    ablauf = datensatz.get('expires_at')
+    if not ablauf:
+        return False
+    try:
+        if isinstance(ablauf, str):
+            ablauf = datetime.fromisoformat(ablauf)
+        jetzt = jetzt or datetime.now(timezone.utc)
+        if ablauf.tzinfo is None:
+            ablauf = ablauf.replace(tzinfo=timezone.utc)
+        if jetzt.tzinfo is None:
+            jetzt = jetzt.replace(tzinfo=timezone.utc)
+        return ablauf > jetzt
+    except (ValueError, TypeError, AttributeError):
+        return False

@@ -15,6 +15,10 @@ streamlit==1.63.0
 # ===== PASSWORT-HASHING =====
 bcrypt==4.2.0
 
+# ===== COOKIES ("Angemeldet bleiben") =====
+# Streamlit kann Cookies nur lesen (st.context.cookies), nicht setzen.
+extra-streamlit-components==0.1.81
+
 # ===== ZEITZONEN =====
 pytz==2024.1
 

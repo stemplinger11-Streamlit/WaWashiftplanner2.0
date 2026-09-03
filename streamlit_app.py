@@ -35,11 +35,17 @@ from core_rules import (
 # Passwort-Hashing inkl. stiller Migration der Bestandsnutzer,
 # abgedeckt durch test_core_auth.py.
 from core_auth import (
+    DEFAULT_REMEMBER_DAYS,
     DEFAULT_SESSION_TIMEOUT_MINUTES,
+    SESSION_COOKIE_NAME,
     hash_pw,
     pw_pruefen,
     session_abgelaufen,
+    session_datensatz_gueltig,
+    session_eintrag,
+    token_hash,
 )
+import extra_streamlit_components as stx
 
 # ===== PAGE CONFIG =====
 st.set_page_config(
@@ -161,6 +167,82 @@ def generate_random_password(length=8):
     # Nur Buchstaben (Groß+Klein) und Zahlen - KEINE Sonderzeichen
     chars = string.ascii_letters + string.digits
     return ''.join(random.choice(chars) for _ in range(length))
+
+# ===== COOKIES ("Angemeldet bleiben") =====
+# Streamlit kann Cookies nicht selbst setzen (st.context.cookies ist nur
+# lesbar), deshalb die Komponente. Jeder Zugriff ist abgesichert: faellt
+# das Cookie-Handling aus, muss der normale Login trotzdem funktionieren -
+# ein Fehler hier darf niemanden aussperren.
+
+@st.cache_resource
+def get_cookie_manager():
+    return stx.CookieManager(key='wawa_cookies')
+
+
+def cookie_lesen(name):
+    try:
+        return get_cookie_manager().get(cookie=name)
+    except Exception as e:
+        print(f"⚠️ Cookie nicht lesbar: {e}")
+        return None
+
+
+def cookie_setzen(name, wert, tage):
+    try:
+        get_cookie_manager().set(
+            name, wert,
+            expires_at=datetime.now() + timedelta(days=tage),
+            key=f'set_{name}'
+        )
+        return True
+    except Exception as e:
+        print(f"⚠️ Cookie nicht setzbar: {e}")
+        return False
+
+
+def cookie_loeschen(name):
+    try:
+        get_cookie_manager().delete(name, key=f'del_{name}')
+        return True
+    except Exception as e:
+        print(f"⚠️ Cookie nicht loeschbar: {e}")
+        return False
+
+
+def get_remember_days():
+    """Gueltigkeit des Anmelde-Cookies in Tagen (0 = Funktion aus)."""
+    try:
+        return int(ww_db.get_setting('remember_me_days', DEFAULT_REMEMBER_DAYS))
+    except (ValueError, TypeError):
+        return DEFAULT_REMEMBER_DAYS
+
+
+def sitzung_aus_cookie_wiederherstellen():
+    """Meldet den Nutzer per Cookie an, falls eines gueltig ist."""
+    if st.session_state.get('user') or st.session_state.get('cookie_geprueft'):
+        return False
+
+    token = cookie_lesen(SESSION_COOKIE_NAME)
+    if not token:
+        # Die Komponente liefert beim allerersten Lauf noch nichts zurueck.
+        # Deshalb wird erst beim zweiten Durchlauf endgueltig aufgegeben.
+        if st.session_state.get('cookie_zweiter_versuch'):
+            st.session_state.cookie_geprueft = True
+        else:
+            st.session_state.cookie_zweiter_versuch = True
+        return False
+
+    nutzer = ww_db.get_session_user(token)
+    st.session_state.cookie_geprueft = True
+    if not nutzer:
+        cookie_loeschen(SESSION_COOKIE_NAME)
+        return False
+
+    st.session_state.user = nutzer
+    st.session_state.last_activity = datetime.now()
+    st.session_state.dauersitzung = True
+    return True
+
 
 # ===== BENACHRICHTIGUNGS-EINSTELLUNGEN =====
 # Bis V8.1 existierten zwei unabhaengige Feld-Schemata nebeneinander:
@@ -796,6 +878,77 @@ class WasserwachtDB:
             return False, None, 'pending' if u.get('pending_approval') else 'disabled'
         return True, u, None
 
+    # ===== DAUERSITZUNGEN ("Angemeldet bleiben") =====
+    # Gespeichert wird nur der Hash des Tokens, das Dokument traegt ihn als
+    # ID. Wer die Datenbank liest, kann sich damit nicht anmelden.
+
+    def create_session(self, user_id, tage=None):
+        """Legt eine Dauersitzung an und gibt das Token zurueck."""
+        try:
+            tage = tage or DEFAULT_REMEMBER_DAYS
+            token, datensatz = session_eintrag(user_id, tage=tage)
+            self.db.collection('sessions').document(token_hash(token)).set(datensatz)
+            return token
+        except Exception as e:
+            print(f"❌ create_session Fehler: {e}")
+            return None
+
+    def get_session_user(self, token):
+        """Nutzer zu einem Token - oder None, wenn ungueltig/abgelaufen."""
+        if not token:
+            return None
+        try:
+            doc = self.db.collection('sessions').document(token_hash(token)).get()
+            if not doc.exists:
+                return None
+            datensatz = doc.to_dict()
+            if not session_datensatz_gueltig(datensatz):
+                self.delete_session(token)
+                return None
+
+            nutzer_doc = self.db.collection('users').document(
+                datensatz['user_id']).get()
+            if not nutzer_doc.exists:
+                self.delete_session(token)
+                return None
+
+            nutzer = nutzer_doc.to_dict()
+            nutzer['id'] = nutzer_doc.id
+            # Zwischenzeitlich gesperrte Konten kommen nicht mehr herein
+            if not nutzer.get('active', True):
+                self.delete_session(token)
+                return None
+            return nutzer
+        except Exception as e:
+            print(f"❌ get_session_user Fehler: {e}")
+            return None
+
+    def delete_session(self, token):
+        try:
+            if token:
+                self.db.collection('sessions').document(token_hash(token)).delete()
+            return True
+        except Exception as e:
+            print(f"❌ delete_session Fehler: {e}")
+            return False
+
+    def delete_sessions_of_user(self, user_id):
+        """Alle Dauersitzungen eines Nutzers beenden.
+
+        Wird bei Passwortwechsel und Passwort-Reset aufgerufen, damit ein
+        altes Cookie danach nicht weitergilt.
+        """
+        try:
+            anzahl = 0
+            for doc in self.db.collection('sessions')\
+                    .where('user_id', '==', user_id).stream():
+                doc.reference.delete()
+                anzahl += 1
+            return anzahl
+        except Exception as e:
+            print(f"❌ delete_sessions_of_user Fehler: {e}")
+            return 0
+
     def get_pending_users(self):
         """Konten, die auf Freigabe durch einen Admin warten."""
         return [u for u in self.get_all_users()
@@ -849,6 +1002,8 @@ class WasserwachtDB:
                 'password_hash': hash_pw(new_password),
                 'password_reset_at': firestore.SERVER_TIMESTAMP
             })
+            # Alte Anmelde-Cookies duerfen nach einem Reset nicht weitergelten
+            self.delete_sessions_of_user(uid)
             print(f"✅ Password Reset triggered für User: {uid}")
             return True, new_password
         except Exception as e:
@@ -1454,6 +1609,10 @@ def login_page():
         with st.form("login_form"):
             email = st.text_input("E-Mail")
             password = st.text_input("Passwort", type="password")
+            angemeldet_bleiben = st.checkbox(
+                "Angemeldet bleiben", value=True,
+                help="Auf diesem Gerät angemeldet bleiben. Auf gemeinsam "
+                     "genutzten Geräten bitte abwählen.")
             submit = st.form_submit_button("Anmelden", use_container_width=True)
             
             if submit:
@@ -1463,6 +1622,14 @@ def login_page():
                         st.session_state.user = user
                         st.session_state.last_activity = datetime.now()
                         st.session_state.pop('session_expired', None)
+                        st.session_state.cookie_geprueft = True
+
+                        tage = get_remember_days()
+                        if angemeldet_bleiben and tage > 0:
+                            token = ww_db.create_session(user['id'], tage=tage)
+                            if token and cookie_setzen(SESSION_COOKIE_NAME, token, tage):
+                                st.session_state.dauersitzung = True
+
                         st.success(f"✅ Willkommen, {user['name']}!")
                         st.rerun()
                     elif reason == 'pending':
@@ -1520,9 +1687,18 @@ def login_page():
                         st.error(f"❌ {msg}")
 
 def logout():
+    # Erst die Dauersitzung beenden, dann die Sitzung im Speicher leeren -
+    # sonst gilt das Cookie weiter und meldet sofort wieder an.
+    token = cookie_lesen(SESSION_COOKIE_NAME)
+    if token:
+        ww_db.delete_session(token)
+        cookie_loeschen(SESSION_COOKIE_NAME)
+
     st.session_state.user = None
     st.session_state.page = 'kalender'
-    st.session_state.pop('last_activity', None)
+    for schluessel in ('last_activity', 'dauersitzung', 'cookie_geprueft',
+                       'cookie_zweiter_versuch'):
+        st.session_state.pop(schluessel, None)
     st.rerun()
 
 # ===== NAVIGATION =====
@@ -2115,6 +2291,15 @@ def profil_page():
                         user['id'],
                         password_hash=neuer_hash
                     )
+                    if success:
+                        # Anmeldungen auf anderen Geraeten beenden und die
+                        # eigene Dauersitzung erneuern
+                        ww_db.delete_sessions_of_user(user['id'])
+                        tage = get_remember_days()
+                        if st.session_state.get('dauersitzung') and tage > 0:
+                            neues_token = ww_db.create_session(user['id'], tage=tage)
+                            if neues_token:
+                                cookie_setzen(SESSION_COOKIE_NAME, neues_token, tage)
 
                     if success:
                         # Session aktualisieren
@@ -2782,6 +2967,24 @@ Details:
                 else:
                     st.error("❌ Fehler beim Speichern")
 
+        st.markdown("### 🍪 Angemeldet bleiben")
+        with st.form("remember_form"):
+            aktuell_tage = get_remember_days()
+            neue_tage = st.number_input(
+                "Tage, die eine Anmeldung auf dem Gerät gültig bleibt",
+                min_value=0, max_value=365, value=aktuell_tage, step=1
+            )
+            st.caption("💡 0 schaltet die Funktion ab – dann muss sich jeder "
+                       "bei jedem Besuch neu anmelden. Bei Passwortwechsel, "
+                       "Passwort-Reset und Deaktivierung werden bestehende "
+                       "Anmeldungen automatisch beendet.")
+            if st.form_submit_button("💾 Speichern", type="primary"):
+                if ww_db.set_setting('remember_me_days', str(int(neue_tage))):
+                    st.success("✅ Gespeichert")
+                    st.rerun()
+                else:
+                    st.error("❌ Fehler beim Speichern")
+
         st.divider()
 
         # ===== ORGANISATION =====
@@ -2929,6 +3132,8 @@ def benutzer_page():
                                       help=f"Nicht möglich: {lock_reason}")
                         elif st.button(toggle_label, key=f"toggle_{u['id']}", help=toggle_help):
                             ww_db.update_user(u['id'], active=not active)
+                            if active:  # wurde gerade deaktiviert
+                                ww_db.delete_sessions_of_user(u['id'])
                             st.success(f"✅ User {'aktiviert' if not active else 'deaktiviert'}")
                             st.rerun()
 
@@ -3795,6 +4000,11 @@ def main():
     # CSS injizieren
     inject_css(dark=st.session_state.dark_mode)
     
+    # Vor dem Login-Check: gibt es ein gueltiges Anmelde-Cookie?
+    if not st.session_state.user:
+        if sitzung_aus_cookie_wiederherstellen():
+            st.rerun()
+
     # Login Check
     if not st.session_state.user:
         login_page()
@@ -3802,8 +4012,10 @@ def main():
 
     # Abmeldung nach Inaktivitaet. Die Sitzung liegt nur im Arbeitsspeicher
     # des Browsers - dieser Timeout schuetzt vor allem geteilte Geraete.
-    if session_abgelaufen(st.session_state.get('last_activity'),
-                          timeout_minuten=get_session_timeout_minutes()):
+    # Wer "Angemeldet bleiben" gewaehlt hat, soll nicht nach einer Stunde
+    # herausfliegen - dort schuetzt die Laufzeit des Cookies.
+    if not st.session_state.get('dauersitzung') and             session_abgelaufen(st.session_state.get('last_activity'),
+                               timeout_minuten=get_session_timeout_minutes()):
         st.session_state.user = None
         st.session_state.pop('last_activity', None)
         st.session_state.session_expired = True
