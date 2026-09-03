@@ -186,29 +186,35 @@ Migration der Bestandsbuchungen auf die neuen IDs.
 
 ---
 
-## Ideen für den weiteren Ausbau
+## Ausbau — Entscheidungen vom 04.09.2026
 
-Ausführlich mit Einschätzung zu Wirkung und Aufwand:
-**[Dienstplan Ausbaustufen](https://claude.ai/code/artifact/538b96de-9b61-4092-b8ab-78a328b08543)**
+Ausführlich: **[Dienstplan Ausbaustufen](https://claude.ai/code/artifact/538b96de-9b61-4092-b8ab-78a328b08543)**
 
-Kurzfassung:
+**Grundlage:** Es ist immer genau **eine** Person im Bad, an der Kasse — kein
+Wachdienst. Das bestehende Datenmodell (eine Buchung je Termin) bleibt damit
+richtig.
 
-**Zuerst zu klären:** Eine Schicht lässt genau *eine* Buchung zu. Für einen
-Wachdienst wäre das ungewöhnlich — davon hängen Warteliste, Qualifikationen,
-Unterbesetzungs-Warnung und Anwesenheitsnachweis ab.
+### Erledigt
+- Termine sperren durch Admins, mit Grund im Kalender und optionaler
+  Stornierung betroffener Buchungen
+- Rundnachricht an alle aktiven Nutzer
+- Admin-Notiz an einer Buchung, für den Nutzer sichtbar
 
-*Für Nutzer:* Kalender-Abo (ICS), Vertretungssuche statt Anruf beim Admin,
-Saisonübersicht statt Wochenklickerei, Serientermine, Notiz zur Buchung,
-eigene Dienstbilanz, Ablage auf dem Handy-Startbildschirm.
+### Offen, in dieser Reihenfolge
+1. **Startbildschirm-Hinweis** — geht über das Browsermenü schon, findet aber
+   kaum jemand. Anleitung in der App, eigenes Symbol, Start ohne Browserleiste.
+2. **Datenschutzerklärung** (fehlt, siehe unten) und `showErrorDetails`
+   abschalten
+3. **Kalender-Abo (ICS)** — bestes Verhältnis Nutzen zu Aufwand
+4. **Monatsübersicht** statt Wochenklickerei, **Vertretungssuche**
+5. **Eigene Dienstbilanz**, **Konten-Import** zum Saisonstart
 
-*Für Admins:* Besetzungsampel über die ganze Saison, einzelne Termine sperren
-(Beckenreinigung, Hallenbelegung), automatischer Aufruf bei unbesetzten
-Diensten, Rundnachricht, Sonderdienste außerhalb des Rasters,
-Qualifikationen mit Ablaufdatum, Anwesenheit bestätigen, Konten-Import.
-
-*Betrieb und Recht:* **Datenschutzerklärung fehlt** (Impressum existiert),
-Löschkonzept für ausgeschiedene Mitglieder, `showErrorDetails` vor
-Saisonstart abschalten.
+### Gestrichen (nicht umsetzen)
+Mehrere Personen je Termin · Qualifikationen hinterlegen ·
+Anwesenheitsbestätigung nach dem Dienst (läuft weiter über die Unterschrift im
+Ordner) · Serientermine (soll einzeln gebucht werden) · Besetzungsampel über
+die ganze Saison (es wird nur 2–3 Wochen im Voraus gebucht) · automatischer
+Aufruf bei unbesetzten Terminen
 
 ---
 
