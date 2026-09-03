@@ -167,7 +167,9 @@ def notify_pref(user, channel, event):
 
     channel: 'email' | 'sms'   event: 'booking' | 'cancellation' | 'reminder'
     """
-    if not user:
+    # None bedeutet 'kein Nutzer bekannt'; ein leeres Dict ist ein Nutzer
+    # ohne gepflegte Einstellungen und bekommt die Standardwerte.
+    if user is None:
         return False
     default = NOTIFY_DEFAULTS.get((channel, event), False)
     value = user.get(f"{channel}_notifications_{event}")
@@ -1302,6 +1304,7 @@ class TwilioSMS:
                 try:
                     self.client = Client(self.account_sid, self.auth_token)
                 except Exception as e:
+                    print(f"⚠️ Twilio-Client nicht initialisierbar: {e}")
                     self.client = None
                     self.enabled = False
             else:
@@ -1725,6 +1728,8 @@ def kalender_page():
                                 success = ww_db.cancel_booking(booking['id'], user.get('email'))
                                 if success:
                                     booked_user = ww_db.get_user(booking.get('user_email')) or {}
+                                    # Unbekanntes Konto -> Standardwerte,
+                                    # die Stornomail geht trotzdem raus
                                     if notify_pref(booked_user, 'email', 'cancellation'):
                                         mailer.send_cancellation(
                                             booking.get('user_email'),
@@ -1887,7 +1892,7 @@ def profil_page():
             # Eine Aenderung hier trennte bisher stillschweigend alle
             # bisherigen Buchungen vom Nutzer.
             st.markdown("**E-Mail-Adresse**")
-            email = st.text_input(
+            st.text_input(
                 "E-Mail",
                 value=user.get('email', ''),
                 disabled=True,
@@ -2222,8 +2227,7 @@ def verwaltung_page():
         
         today = datetime.now().date()
         weeks_ahead = 4
-        end_date = today + timedelta(days=7 * weeks_ahead)
-        
+
         all_slots = []
         current_week = week_start(today)
 
@@ -2968,7 +2972,8 @@ def benutzer_page():
                         st.markdown(f"### ✏️ Bearbeiten: {u.get('name')}")
                         
                         edit_name = st.text_input("Name", value=u.get('name', ''))
-                        edit_email = st.text_input("E-Mail", value=u.get('email', ''), disabled=True)
+                        st.text_input("E-Mail", value=u.get('email', ''), disabled=True,
+                                      key=f"edit_email_{u['id']}")
                         edit_phone = st.text_input("Telefon", value=u.get('phone', ''))
                         edit_role = st.selectbox("Rolle", ["user", "admin"], 
                                                 index=0 if u.get('role') == 'user' else 1)

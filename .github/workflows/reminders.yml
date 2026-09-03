@@ -1,0 +1,60 @@
+name: Dienst-Erinnerungen
+
+# WICHTIG - der Zeitplan ist absichtlich noch deaktiviert.
+#
+# Vor dem Scharfschalten muss geklaert sein, ob bereits eine andere Stelle
+# Erinnerungen verschickt (etwa eine aeltere Deployment-Variante oder ein
+# externer Dienst). Laeuft beides parallel, bekommen die Nutzer jede
+# Erinnerung doppelt.
+#
+# Zum Aktivieren: den 'schedule'-Block unten einkommentieren.
+# 16:00 UTC entspricht 18:00 im Sommer (MESZ) bzw. 17:00 im Winter (MEZ).
+# GitHub-Cron laeuft immer in UTC und kennt keine Zeitzonenumstellung.
+
+on:
+  workflow_dispatch:
+    inputs:
+      senden:
+        description: "Tatsächlich versenden (sonst nur Trockenlauf)"
+        type: boolean
+        default: false
+      tage:
+        description: "Vorlauf in Tagen"
+        type: string
+        default: "1"
+
+  # schedule:
+  #   - cron: "0 16 * * *"
+
+jobs:
+  erinnerungen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Abhängigkeiten installieren
+        run: pip install google-cloud-firestore twilio
+
+      - name: Erinnerungen versenden
+        env:
+          FIREBASE_CREDENTIALS: ${{ secrets.FIREBASE_CREDENTIALS }}
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          ENABLE_SMS_REMINDER: ${{ secrets.ENABLE_SMS_REMINDER }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_PHONE_NUMBER: ${{ secrets.TWILIO_PHONE_NUMBER }}
+        run: |
+          # Beim geplanten Lauf immer senden, bei manueller Ausloesung
+          # nur wenn ausdruecklich angehakt.
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.senden }}" = "true" ]; then
+            python scripts/send_reminders.py --senden --tage "${{ inputs.tage || 1 }}"
+          else
+            python scripts/send_reminders.py --tage "${{ inputs.tage || 1 }}"
+          fi

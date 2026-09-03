@@ -2,8 +2,11 @@
 
 Stand: 02.09.2026 · Basis: `streamlit_app.py` V9.0
 
-**Erledigt:** P0 1–6, P1 7 (teilweise), 8–15, P2 17, P3 20, 21, 22, 26.
-**Offen:** P1 7 (Erinnerungen), P2 16, 18, 19, P3 23, 24, 25.
+**Erledigt:** P0 1–6, P1 8–15, P2 16, 17, 18, P3 20, 21, 22, 23, 24, 26.
+**Offen:** P1 7 (Erinnerungen: gebaut, Zeitplan noch deaktiviert),
+P2 19 (Session-Persistenz), P3 25 (Modularisierung).
+
+**Tests:** 79, laufen ohne Firebase und ohne Streamlit (`python -m pytest -q`).
 
 ---
 
@@ -65,7 +68,7 @@ In Tab „Admin-Buchung" wird `selected_slot` nur innerhalb des `else:`-Zweigs g
 
 ## P1 — Funktioniert nicht wie angezeigt
 
-### 7. Erinnerungsfunktion existiert nicht
+### 🔸 7. Erinnerungsfunktion existiert nicht
 `APScheduler` und `CronTrigger` werden importiert (Z. 19/20), aber **nie verwendet**. `Mailer.send_reminder()` (Z. 1007) und `TwilioSMS.send_reminder()` (Z. 1260) werden von nirgendwo aufgerufen.
 
 Trotzdem verspricht das Handbuch „Sie erhalten Erinnerungen 24h vor Ihrem Dienst", das Profil bietet die Checkbox „Erinnerungen (24h vorher)" an, und es gibt eine editierbare Vorlage dafür. **Es wurde noch nie eine Erinnerung verschickt.**
@@ -107,7 +110,7 @@ Im Export-Bereich liegen die `st.download_button` innerhalb eines `if st.button(
 
 ## P2 — Sicherheit
 
-### 16. Passwörter mit ungesalzenem SHA-256
+### ✅ 16. Passwörter mit ungesalzenem SHA-256
 `hash_pw()` (Z. 93) ist ein einfacher SHA-256 ohne Salt und ohne Key-Stretching — anfällig für Rainbow-Table-Angriffe. Zeitgemäß wäre bcrypt oder Argon2.
 
 → **Bestandsnutzer-Constraint:** Kein Rehash möglich, ohne die Klartext-Passwörter zu kennen. Lösung: beim nächsten erfolgreichen Login transparent auf das neue Verfahren umstellen (Hash-Typ am Präfix erkennen), Altverfahren als Fallback behalten. So verliert niemand seinen Zugang.
@@ -115,7 +118,7 @@ Im Export-Bereich liegen die `st.download_button` innerhalb eines `if st.button(
 ### ✅ 17. Admin-Fallback-Passwort `admin123`
 `_init_admin()` (Z. 646) fällt auf `admin@wasserwacht.de` / `admin123` zurück, wenn die Secrets fehlen. Fehlt der Key, entsteht ein öffentlich erreichbarer Admin-Zugang mit trivialem Passwort.
 
-### 18. Selbstregistrierung ohne jede Prüfung
+### ✅ 18. Selbstregistrierung ohne jede Prüfung
 Jeder mit der URL kann sich einen Account anlegen und sofort Schichten buchen — keine E-Mail-Verifikation, keine Admin-Freigabe, keine Einladungscodes.
 
 → **Klärungsbedarf:** Ist das gewollt (interner Link im Verein) oder soll eine Freigabe durch den Admin dazwischen?
@@ -138,13 +141,13 @@ Der Default-Text nennt „Stornieren Sie Buchungen bis 24h vorher" (**keine solc
 
 → **Klärungsbedarf:** Soll die 24h-Stornofrist tatsächlich existieren? Dann ist das ein fehlendes Feature, kein Doku-Fehler.
 
-### 23. Firestore-Abfragen: N+1-Probleme
+### ✅ 23. Firestore-Abfragen: N+1-Probleme
 - Benutzerverwaltung ruft `get_user_bookings()` **pro Nutzer** auf (Z. 2502) → bei 30 Nutzern 30 Abfragen bei **jedem** Rerun.
 - „Freie Slots" ruft `get_booking()` einzeln pro Slot auf (Z. 2059) → 12 Abfragen.
 
 Auf dem Firestore-Free-Tier zählt jeder Read gegen das Kontingent. Besser: einmal alle relevanten Buchungen laden und im Speicher zuordnen.
 
-### 24. Fehlender Composite-Index
+### ✅ 24. Fehlender Composite-Index
 `get_week_bookings()` braucht einen zusammengesetzten Index für `slot_date` + `status`. Der Code fängt den Fehler ab und fällt auf einen **Full-Scan aller Buchungen** zurück (Z. 762 ff.) — funktioniert, wird aber mit wachsender Datenmenge langsam und teuer. Index in der Firebase-Konsole anlegen.
 
 ### 25. Monolith aufteilen
