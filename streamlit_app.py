@@ -27,6 +27,7 @@ from collections import Counter
 # core_rules.py und sind durch test_core_rules.py abgedeckt.
 import core_rules as rules
 import core_theme as theme
+import core_reminders as reminders
 import core_styles as styles
 from core_rules import (
     DEFAULT_PAUSE_START,
@@ -149,11 +150,34 @@ def get_session_timeout_minutes():
 def is_in_pause(d):
     return rules.is_in_pause(d, *get_pause_range())
 
+def user_email_admin():
+    """E-Mail des angemeldeten Admins, fuer Protokolleintraege."""
+    nutzer = st.session_state.get('user') or {}
+    return nutzer.get('email', 'unbekannt')
+
+
+# Vom Admin gesperrte Termine. Einmal je Skriptlauf laden statt bei jedem
+# Aufruf - is_blocked() wird beim Aufbau des Kalenders sehr oft gerufen.
+# Die Variable steht auf Modulebene und wird bei jedem Rerun neu gesetzt;
+# die Daten sind also nie aelter als der laufende Seitenaufbau.
+_gesperrte_termine = None
+
+
+def get_blocked_dates(neu_laden=False):
+    """{'YYYY-MM-TT': grund} der vom Admin gesperrten Termine."""
+    global _gesperrte_termine
+    if _gesperrte_termine is None or neu_laden:
+        _gesperrte_termine = ww_db.get_blocked_dates()
+    return _gesperrte_termine
+
+
 def is_blocked(d):
-    return rules.is_blocked(d, *get_pause_range())
+    return rules.is_blocked(d, *get_pause_range(),
+                            gesperrte=get_blocked_dates())
 
 def block_reason(d):
-    return rules.block_reason(d, *get_pause_range())
+    return rules.block_reason(d, *get_pause_range(),
+                              gesperrte=get_blocked_dates())
 
 def can_cancel(slot_date_str, slot_time_str, is_admin=False, now=None):
     """Stornoregel mit der in den Einstellungen gepflegten Frist."""
@@ -710,6 +734,52 @@ class WasserwachtDB:
             return True
         except Exception as e:
             print(f"❌ restore_booking Fehler: {e}")
+            return False
+
+    # ===== VOM ADMIN GESPERRTE TERMINE =====
+
+    def get_blocked_dates(self):
+        """Alle gesperrten Termine als {'YYYY-MM-TT': grund}."""
+        try:
+            return {doc.id: (doc.to_dict() or {}).get('reason', '')
+                    for doc in self.db.collection('blocked_dates').stream()}
+        except Exception as e:
+            print(f"[Fehler] get_blocked_dates: {e}")
+            return {}
+
+    def block_dates(self, daten, grund, admin_email):
+        """Termine sperren. Die Dokument-ID ist das Datum."""
+        try:
+            batch = self.db.batch()
+            for datum in daten:
+                batch.set(self.db.collection('blocked_dates').document(datum), {
+                    'reason': grund,
+                    'blocked_by': admin_email,
+                    'blocked_at': firestore.SERVER_TIMESTAMP,
+                })
+            batch.commit()
+            print(f"[OK] {len(daten)} Termin(e) gesperrt: {grund}")
+            return True
+        except Exception as e:
+            print(f"[Fehler] block_dates: {e}")
+            return False
+
+    def unblock_date(self, datum):
+        try:
+            self.db.collection('blocked_dates').document(datum).delete()
+            return True
+        except Exception as e:
+            print(f"[Fehler] unblock_date: {e}")
+            return False
+
+    def set_booking_note(self, bid, notiz):
+        """Notiz eines Admins an einer Buchung."""
+        try:
+            self.db.collection('bookings').document(bid).update(
+                {'admin_note': notiz})
+            return True
+        except Exception as e:
+            print(f"[Fehler] set_booking_note: {e}")
             return False
 
     def get_setting(self,key,default=''):
@@ -1579,6 +1649,8 @@ def meine_buchungen_page():
                     st.markdown(f"**📧 E-Mail:** {b['user_email']}")
                     if b.get('user_phone'):
                         st.markdown(f"**📱 Telefon:** {b['user_phone']}")
+                    if b.get('admin_note'):
+                        st.info(f"📌 **Hinweis:** {b['admin_note']}")
                     
                     allowed, hinweis = can_cancel(
                         b['slot_date'], b.get('slot_time', ''),
@@ -1904,13 +1976,174 @@ def statistik_page():
 def verwaltung_page():
     st.title("⚙️ Verwaltung")
     
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📋 Alle Buchungen", 
-        "🔍 Freie Slots", 
-        "👥 Admin-Buchung", 
-        "🗑️ Archivieren", 
+    tab1, tab2, tab3, tab_sperr, tab_rund, tab4, tab5 = st.tabs([
+        "📋 Alle Buchungen",
+        "🔍 Freie Slots",
+        "👥 Admin-Buchung",
+        "🚫 Termine sperren",
+        "📣 Rundnachricht",
+        "🗑️ Archivieren",
         "⚙️ Einstellungen"
     ])
+
+    # ===== TERMINE SPERREN =====
+    with tab_sperr:
+        st.subheader("🚫 Termine sperren")
+        st.caption("Für Tage, an denen kein Dienst stattfindet – etwa wenn das "
+                   "Bad geschlossen ist. Feiertage und die Saisonpause sind "
+                   "bereits automatisch gesperrt.")
+
+        gesperrte = get_blocked_dates(neu_laden=True)
+
+        with st.form("termin_sperren"):
+            col_sp1, col_sp2 = st.columns(2)
+            with col_sp1:
+                sperr_von = st.date_input("Von", value=datetime.now().date(),
+                                          format="DD.MM.YYYY")
+            with col_sp2:
+                sperr_bis = st.date_input("Bis (einschließlich)",
+                                          value=datetime.now().date(),
+                                          format="DD.MM.YYYY")
+
+            sperr_grund = st.text_input(
+                "Grund",
+                placeholder="z. B. Bad geschlossen – Beckenreinigung",
+                help="Erscheint für alle Nutzer im Kalender")
+
+            sperr_stornieren = st.checkbox(
+                "Vorhandene Buchungen stornieren und die Betroffenen "
+                "benachrichtigen", value=True)
+
+            if st.form_submit_button("🚫 Sperren", type="primary",
+                                     use_container_width=True):
+                sperr_daten = rules.datumsbereich(sperr_von, sperr_bis)
+                if not sperr_daten:
+                    st.error("❌ Ungültiger Zeitraum")
+                elif not sperr_grund.strip():
+                    st.error("❌ Bitte einen Grund angeben – er erscheint im Kalender")
+                else:
+                    betroffen = [
+                        b for b in ww_db.get_bookings_between(
+                            sperr_daten[0], sperr_daten[-1])
+                        if b.get('slot_date') in sperr_daten
+                    ]
+
+                    if ww_db.block_dates(sperr_daten, sperr_grund.strip(),
+                                         user_email_admin()):
+                        st.success(f"✅ {len(sperr_daten)} Termin(e) gesperrt")
+
+                        if betroffen and sperr_stornieren:
+                            for b in betroffen:
+                                ww_db.cancel_booking(
+                                    b['id'], f"Sperrung: {sperr_grund.strip()}")
+                                nutzer = ww_db.get_user(b.get('user_email')) or {}
+                                if notify_pref(nutzer, 'email', 'cancellation'):
+                                    mailer.send_cancellation(
+                                        b.get('user_email'), b.get('user_name'),
+                                        b.get('slot_date'), b.get('slot_time'),
+                                        comment=sperr_grund.strip())
+                            st.warning(
+                                f"⚠️ {len(betroffen)} Buchung(en) storniert und "
+                                "die Betroffenen benachrichtigt.")
+                        elif betroffen:
+                            st.warning(
+                                f"⚠️ {len(betroffen)} Buchung(en) liegen in diesem "
+                                "Zeitraum und bleiben bestehen. Die Termine sind "
+                                "aber nicht mehr buchbar.")
+                        st.rerun()
+                    else:
+                        st.error("❌ Sperren fehlgeschlagen")
+
+        st.divider()
+        st.markdown("### Aktuell gesperrte Termine")
+
+        heute_str = datetime.now().strftime('%Y-%m-%d')
+        kommende = {d: g for d, g in gesperrte.items() if d >= heute_str}
+
+        if not kommende:
+            st.info("Keine eigenen Sperrungen für die Zukunft.")
+        else:
+            for datum in sorted(kommende):
+                col_sx, col_sy = st.columns([5, 1])
+                with col_sx:
+                    st.markdown(
+                        f"**{fmt_de(datum)}** — {kommende[datum] or 'Gesperrt'}")
+                with col_sy:
+                    if st.button("Aufheben", key=f"entsperr_{datum}",
+                                 use_container_width=True):
+                        if ww_db.unblock_date(datum):
+                            st.success(f"✅ {fmt_de(datum)} wieder freigegeben")
+                            st.rerun()
+
+            vergangene = len(gesperrte) - len(kommende)
+            if vergangene:
+                st.caption(f"Dazu {vergangene} Sperrung(en) in der Vergangenheit.")
+
+    # ===== RUNDNACHRICHT =====
+    with tab_rund:
+        st.subheader("📣 Rundnachricht an alle")
+        st.caption("Eine E-Mail an alle aktiven Nutzer – etwa zum Saisonstart "
+                   "oder bei kurzfristigen Änderungen.")
+
+        alle_aktiven = [u for u in ww_db.get_all_users()
+                        if u.get('active', True) and u.get('email')]
+
+        with st.form("rundnachricht"):
+            nur_eingewilligte = st.checkbox(
+                "Nur an Nutzer mit aktivierten E-Mail-Benachrichtigungen",
+                value=False,
+                help="Ausgeschaltet erreicht die Nachricht alle aktiven Konten. "
+                     "Für organisatorische Mitteilungen ist das üblich.")
+
+            empfaenger = ([u for u in alle_aktiven
+                           if notify_pref(u, 'email', 'booking')]
+                          if nur_eingewilligte else alle_aktiven)
+
+            st.info(f"📬 Empfänger: **{len(empfaenger)}** von "
+                    f"{len(alle_aktiven)} aktiven Konten")
+
+            rund_betreff = st.text_input(
+                "Betreff", placeholder="z. B. Saisonstart am 15. September")
+            rund_text = st.text_area("Nachricht", height=240)
+            st.caption("💡 `{name}` wird durch den Namen des Empfängers ersetzt. "
+                       "Ebenfalls möglich: `{email}`, `{org_name}`.")
+
+            if st.form_submit_button("📣 An alle senden", type="primary",
+                                     use_container_width=True):
+                if not rund_betreff.strip() or not rund_text.strip():
+                    st.error("❌ Betreff und Nachricht dürfen nicht leer sein")
+                elif not empfaenger:
+                    st.error("❌ Keine Empfänger")
+                else:
+                    org = ww_db.get_setting('org_name', 'Wasserwacht')
+                    fortschritt = st.progress(0.0, text="Wird gesendet …")
+                    gesendet, fehlgeschlagen = 0, []
+
+                    for i, u in enumerate(empfaenger, start=1):
+                        daten = {'name': u.get('name', ''),
+                                 'email': u.get('email', ''),
+                                 'org_name': org}
+                        ok, meldung = mailer.send(
+                            u['email'],
+                            reminders.platzhalter_ersetzen(rund_betreff, daten),
+                            reminders.platzhalter_ersetzen(rund_text, daten))
+                        if ok:
+                            gesendet += 1
+                        else:
+                            fehlgeschlagen.append((u.get('email'), meldung))
+                        fortschritt.progress(
+                            i / len(empfaenger),
+                            text=f"Wird gesendet … {i}/{len(empfaenger)}")
+
+                    fortschritt.empty()
+                    if gesendet:
+                        st.success(f"✅ {gesendet} Nachricht(en) versendet")
+                    if fehlgeschlagen:
+                        st.error(f"❌ {len(fehlgeschlagen)} nicht zustellbar")
+                        with st.expander("Fehlgeschlagene Empfänger"):
+                            for adresse, meldung in fehlgeschlagen:
+                                st.markdown(f"- **{adresse}** — {meldung}")
+
     
     # ===== TAB 1: ALLE BUCHUNGEN (wie gehabt) =====
     with tab1:
@@ -1958,6 +2191,19 @@ def verwaltung_page():
                             if booking.get('user_phone'):
                                 st.markdown(f"**📱 Telefon:** {booking.get('user_phone')}")
                             st.markdown(f"**Status:** {booking.get('status', 'N/A')}")
+
+                            notiz = st.text_area(
+                                "Notiz (für den Nutzer sichtbar)",
+                                value=booking.get('admin_note', ''),
+                                key=f"notiz_{booking['id']}",
+                                height=80,
+                                help="Etwa: Schlüssel bitte im Büro abholen")
+                            if st.button("💾 Notiz speichern",
+                                         key=f"notiz_save_{booking['id']}"):
+                                if ww_db.set_booking_note(booking['id'], notiz.strip()):
+                                    st.success("✅ Notiz gespeichert")
+                                else:
+                                    st.error("❌ Speichern fehlgeschlagen")
                         
                         with col_b:
                             if booking.get('status') == 'confirmed':

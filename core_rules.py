@@ -108,12 +108,46 @@ def is_in_pause(d, pause_start=DEFAULT_PAUSE_START, pause_end=DEFAULT_PAUSE_END)
         return False
 
 
-def is_blocked(d, pause_start=DEFAULT_PAUSE_START, pause_end=DEFAULT_PAUSE_END):
+def datumsbereich(von, bis):
+    """Alle Tage von 'von' bis 'bis' einschliesslich, als Liste von Strings.
+
+    Liegt 'bis' vor 'von', wird getauscht - eine vertauschte Eingabe im
+    Formular soll keine leere Sperrung erzeugen.
+    """
+    try:
+        a = datetime.strptime(to_date_str(von), "%Y-%m-%d").date()
+        b = datetime.strptime(to_date_str(bis), "%Y-%m-%d").date()
+    except (ValueError, TypeError, AttributeError):
+        return []
+    if b < a:
+        a, b = b, a
+    return [(a + timedelta(days=i)).strftime("%Y-%m-%d")
+            for i in range((b - a).days + 1)]
+
+
+def is_blocked(d, pause_start=DEFAULT_PAUSE_START, pause_end=DEFAULT_PAUSE_END,
+               gesperrte=None):
+    """Ist an diesem Tag keine Buchung moeglich?
+
+    gesperrte: {'YYYY-MM-TT': grund} - vom Admin gesperrte Einzeltermine,
+    etwa bei geschlossenem Bad.
+    """
+    if gesperrte and to_date_str(d) in gesperrte:
+        return True
     return is_holiday(d) or is_in_pause(d, pause_start, pause_end)
 
 
-def block_reason(d, pause_start=DEFAULT_PAUSE_START, pause_end=DEFAULT_PAUSE_END):
-    """Grund der Sperrung oder None."""
+def block_reason(d, pause_start=DEFAULT_PAUSE_START, pause_end=DEFAULT_PAUSE_END,
+                 gesperrte=None):
+    """Grund der Sperrung oder None.
+
+    Die Admin-Sperrung hat Vorrang: Sie wurde bewusst gesetzt und traegt den
+    aussagekraeftigeren Grund ("Bad geschlossen" statt "Feiertag").
+    """
+    if gesperrte:
+        grund = gesperrte.get(to_date_str(d))
+        if grund is not None:
+            return grund or "Gesperrt"
     name = holiday_name(d)
     if name:
         return f"Feiertag: {name}"

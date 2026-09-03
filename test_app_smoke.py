@@ -187,3 +187,36 @@ def test_keine_widgets_in_gecachten_funktionen():
     assert not unerwartet, (
         f"Neu gecachte Funktionen pruefen, ob sie Streamlit-Elemente "
         f"erzeugen: {sorted(unerwartet)}")
+
+
+# ===== VOM ADMIN GESPERRTE TERMINE =====
+
+def test_sperr_funktionen_vorhanden(app):
+    for name in ['get_blocked_dates', 'user_email_admin']:
+        assert callable(getattr(app, name, None)), f"{name} fehlt"
+    for name in ['get_blocked_dates', 'block_dates', 'unblock_date',
+                 'set_booking_note']:
+        assert callable(getattr(app.WasserwachtDB, name, None)), f"{name} fehlt"
+
+
+def test_gesperrter_termin_ist_nicht_buchbar(app, monkeypatch):
+    """Verhalten, nicht nur Existenz: die Sperrliste muss durchschlagen."""
+    monkeypatch.setattr(app, 'get_blocked_dates',
+                        lambda neu_laden=False: {"2026-10-13": "Bad geschlossen"})
+    monkeypatch.setattr(app, 'get_pause_range', lambda: ("06-01", "09-14"))
+
+    assert app.is_blocked("2026-10-13")
+    assert app.block_reason("2026-10-13") == "Bad geschlossen"
+    # Nachbartag bleibt frei
+    assert not app.is_blocked("2026-10-14")
+    assert app.block_reason("2026-10-14") is None
+
+
+def test_ohne_sperrung_gelten_weiter_feiertag_und_pause(app, monkeypatch):
+    monkeypatch.setattr(app, 'get_blocked_dates', lambda neu_laden=False: {})
+    monkeypatch.setattr(app, 'get_pause_range', lambda: ("06-01", "09-14"))
+
+    assert app.is_blocked("2026-12-25")
+    assert app.block_reason("2026-12-25").startswith("Feiertag")
+    assert app.is_blocked("2026-07-01")
+    assert app.block_reason("2026-07-01") == "Saisonpause"

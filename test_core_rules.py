@@ -221,3 +221,72 @@ def test_to_date_str_normalisiert():
     assert to_date_str("2026-09-15") == "2026-09-15"
     assert to_date_str(date(2026, 9, 15)) == "2026-09-15"
     assert to_date_str(datetime(2026, 9, 15, 17, 0)) == "2026-09-15"
+
+
+# ===== VOM ADMIN GESPERRTE TERMINE =====
+
+from core_rules import datumsbereich  # noqa: E402
+
+
+def test_datumsbereich_einzelner_tag():
+    assert datumsbereich("2026-09-15", "2026-09-15") == ["2026-09-15"]
+
+
+def test_datumsbereich_mehrere_tage():
+    assert datumsbereich("2026-09-15", "2026-09-18") == [
+        "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18"]
+
+
+def test_datumsbereich_ueber_monatsgrenze():
+    assert datumsbereich("2026-09-29", "2026-10-02") == [
+        "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"]
+
+
+def test_datumsbereich_vertauschte_eingabe():
+    """Vertauschte Daten im Formular duerfen nicht zu einer leeren Sperrung fuehren."""
+    assert datumsbereich("2026-09-18", "2026-09-15") == [
+        "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18"]
+
+
+@pytest.mark.parametrize("von,bis", [(None, None), ("kaputt", "2026-09-15")])
+def test_datumsbereich_unbrauchbare_eingabe(von, bis):
+    assert datumsbereich(von, bis) == []
+
+
+def test_datumsbereich_akzeptiert_date_objekte():
+    assert datumsbereich(date(2026, 9, 15), date(2026, 9, 16)) == [
+        "2026-09-15", "2026-09-16"]
+
+
+def test_gesperrter_termin_blockiert():
+    gesperrt = {"2026-09-15": "Bad geschlossen"}
+    assert is_blocked("2026-09-15", gesperrte=gesperrt)
+    assert block_reason("2026-09-15", gesperrte=gesperrt) == "Bad geschlossen"
+
+
+def test_nicht_gesperrter_termin_bleibt_frei():
+    gesperrt = {"2026-09-15": "Bad geschlossen"}
+    assert not is_blocked("2026-09-16", gesperrte=gesperrt)
+    assert block_reason("2026-09-16", gesperrte=gesperrt) is None
+
+
+def test_sperrung_ohne_grund_bekommt_standardtext():
+    assert block_reason("2026-09-15", gesperrte={"2026-09-15": ""}) == "Gesperrt"
+
+
+def test_adminsperrung_hat_vorrang_vor_feiertag():
+    """Der bewusst gesetzte Grund ist aussagekraeftiger."""
+    gesperrt = {"2026-12-25": "Sonderöffnung trotz Feiertag abgesagt"}
+    assert block_reason("2026-12-25", gesperrte=gesperrt) == \
+        "Sonderöffnung trotz Feiertag abgesagt"
+
+
+def test_feiertag_gilt_weiter_ohne_adminsperrung():
+    assert block_reason("2026-12-25", gesperrte={}).startswith("Feiertag")
+
+
+def test_ohne_sperrliste_unveraendert():
+    """Bestehendes Verhalten darf sich nicht verschieben."""
+    assert block_reason("2026-07-01") == "Saisonpause"
+    assert block_reason("2026-09-15") is None
+    assert not is_blocked("2026-09-15", gesperrte=None)
