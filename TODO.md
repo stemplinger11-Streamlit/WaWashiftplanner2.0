@@ -186,35 +186,69 @@ Migration der Bestandsbuchungen auf die neuen IDs.
 
 ---
 
-## Ausbau — Entscheidungen vom 04.09.2026
+## Ausbau — Stand 04.09.2026
 
 Ausführlich: **[Dienstplan Ausbaustufen](https://claude.ai/code/artifact/538b96de-9b61-4092-b8ab-78a328b08543)**
 
-**Grundlage:** Es ist immer genau **eine** Person im Bad, an der Kasse — kein
-Wachdienst. Das bestehende Datenmodell (eine Buchung je Termin) bleibt damit
-richtig.
+**Grundlage:** Immer genau **eine** Person im Bad, an der Kasse — kein
+Wachdienst. Das Datenmodell (eine Buchung je Termin) bleibt damit richtig.
 
-### Erledigt
+### Umgesetzt
 - Termine sperren durch Admins, mit Grund im Kalender und optionaler
   Stornierung betroffener Buchungen
 - Rundnachricht an alle aktiven Nutzer
 - Admin-Notiz an einer Buchung, für den Nutzer sichtbar
+- Kalenderdatei (.ics) für eigene Termine und für alle Dienste
+- Vertretung suchen und übernehmen
+- Eigene Dienstbilanz (Dienste und Stunden der Saison)
+- Übersicht der nächsten acht Wochen
+- Hinweis zum Ablegen auf dem Handy, mit Anleitung für iOS und Android
+- Nutzer-Import aus CSV
+- Datenschutzseite (Entwurf, siehe unten)
+- Doppelbuchung: Prüfen und Schreiben in einer Transaktion
 
-### Offen, in dieser Reihenfolge
-1. **Startbildschirm-Hinweis** — geht über das Browsermenü schon, findet aber
-   kaum jemand. Anleitung in der App, eigenes Symbol, Start ohne Browserleiste.
-2. **Datenschutzerklärung** (fehlt, siehe unten) und `showErrorDetails`
-   abschalten
-3. **Kalender-Abo (ICS)** — bestes Verhältnis Nutzen zu Aufwand
-4. **Monatsübersicht** statt Wochenklickerei, **Vertretungssuche**
-5. **Eigene Dienstbilanz**, **Konten-Import** zum Saisonstart
+### Gestrichen
+Mehrere Personen je Termin · Qualifikationen · Anwesenheitsbestätigung
+(bleibt bei der Unterschrift im Ordner) · Serientermine · Saison-Ampel ·
+automatischer Aufruf bei unbesetzten Terminen
 
-### Gestrichen (nicht umsetzen)
-Mehrere Personen je Termin · Qualifikationen hinterlegen ·
-Anwesenheitsbestätigung nach dem Dienst (läuft weiter über die Unterschrift im
-Ordner) · Serientermine (soll einzeln gebucht werden) · Besetzungsampel über
-die ganze Saison (es wird nur 2–3 Wochen im Voraus gebucht) · automatischer
-Aufruf bei unbesetzten Terminen
+---
+
+## Offen — braucht eine Entscheidung von dir
+
+### A. Datenschutzerklärung inhaltlich freigeben
+Die Seite steht und ist bearbeitbar, der Text ist als **ungeprüfter Entwurf**
+gekennzeichnet und für alle sichtbar erst nach dem Speichern. Er nennt
+Firestore, Streamlit und Twilio als Auftragsverarbeiter und beschreibt das
+Anmelde-Cookie. **Inhaltlich verantworten muss ihn der Verein**, nicht ich –
+insbesondere Verantwortlicher, Aufbewahrungsfristen und Kontaktweg.
+
+### B. Echtes Kalender-Abo statt Download
+Heute wird eine `.ics`-Datei heruntergeladen: einmal importieren, fertig.
+Ändert sich später eine Buchung, merkt der Kalender das nicht. Ein echtes Abo
+bräuchte eine dauerhaft erreichbare Adresse, die Streamlit Cloud nicht
+bereitstellt — also eine Cloud Function oder ähnliches. **Das ist eine
+Entscheidung über zusätzliche Infrastruktur und Kosten.**
+
+### C. Echte App statt Lesezeichen
+Der Hinweis zum Ablegen auf dem Handy funktioniert, aber es bleibt ein
+Browser-Lesezeichen: kein eigenes Symbol, kein Offline-Betrieb. Eine richtige
+PWA bräuchte Zugriff auf die ausgelieferte `index.html`, den Streamlit Cloud
+nicht gewährt. **Entscheidung: eigenes Hosting oder so belassen.**
+
+### D. Fehlermeldungen vor dem Saisonstart abschalten
+`showErrorDetails` steht bewusst noch auf sichtbar, damit du beim Testen
+echte Meldungen bekommst. **Vor dem Saisonstart in `.streamlit/config.toml`
+umstellen**, sonst sehen Nutzer im Fehlerfall Code-Auszüge.
+
+### E. Erinnerungen scharf schalten
+Das Skript und die GitHub Action stehen, der Zeitplan ist deaktiviert. Vorher
+klären, ob bereits eine andere Stelle Erinnerungen verschickt — sonst kommt
+alles doppelt an.
+
+### F. Aufteilung der Hauptdatei
+`streamlit_app.py` ist weiter gewachsen. Die Fachlogik liegt inzwischen in
+`core_*.py`, die Oberfläche nicht. Sinnvoll nach der Saison, nicht davor.
 
 ---
 

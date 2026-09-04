@@ -14,9 +14,13 @@ auf gemeinsamer Datenbasis.
 | Datei | Inhalt |
 |---|---|
 | `streamlit_app.py` | Einstiegspunkt: Oberfläche, Datenzugriff, E-Mail/SMS |
-| `core_rules.py` | Feiertage, Saisonpause, Stornofrist – ohne Streamlit/Firestore |
+| `core_rules.py` | Feiertage, Saisonpause, Stornofrist, Saisonzeitraum |
 | `core_auth.py` | Passwort-Hashing inkl. Migration der Bestandsnutzer |
-| `test_core_rules.py`, `test_core_auth.py` | Tests der fachlichen Regeln |
+| `core_theme.py` / `core_styles.py` | Farbpalette und Stylesheet |
+| `core_ics.py` | Kalenderdatei (.ics) aus Buchungen |
+| `core_import.py` | Nutzerliste aus CSV einlesen |
+| `core_reminders.py` | Auswahl der fälligen Erinnerungen |
+| `test_core_*.py` | Tests der fachlichen Regeln (ohne Firebase/Streamlit) |
 | `scripts/` | Sicherung und Wiederherstellung der Datenbank |
 | `TODO.md` | Befunde, offene Punkte, Projektrahmen |
 | `BACKUP.md` | Anleitung zur Datensicherung |
