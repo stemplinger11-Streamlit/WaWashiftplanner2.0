@@ -290,3 +290,75 @@ def test_ohne_sperrliste_unveraendert():
     assert block_reason("2026-07-01") == "Saisonpause"
     assert block_reason("2026-09-15") is None
     assert not is_blocked("2026-09-15", gesperrte=None)
+
+
+# ===== DIENSTDAUER =====
+
+from core_rules import dienstdauer_stunden, saison_zeitraum  # noqa: E402
+
+
+def test_dienstdauer_drei_stunden():
+    assert dienstdauer_stunden({'slot_time': '17:00 - 20:00'}) == 3.0
+
+
+def test_dienstdauer_ohne_leerzeichen():
+    assert dienstdauer_stunden({'slot_time': '14:00-17:00'}) == 3.0
+
+
+def test_dienstdauer_halbe_stunde():
+    assert dienstdauer_stunden({'slot_time': '17:00 - 20:30'}) == 3.5
+
+
+@pytest.mark.parametrize("wert", ['', 'kaputt', None, '17:00'])
+def test_dienstdauer_unlesbar_ist_null(wert):
+    assert dienstdauer_stunden({'slot_time': wert}) == 0.0
+
+
+def test_dienstdauer_ohne_buchung():
+    assert dienstdauer_stunden(None) == 0.0
+    assert dienstdauer_stunden({}) == 0.0
+
+
+# ===== SAISONZEITRAUM =====
+
+def test_saison_beginnt_nach_der_pause():
+    """Pause endet am 14.09., die Saison also am 15.09."""
+    start, ende = saison_zeitraum(heute=date(2026, 10, 1))
+    assert start == "2026-09-15"
+    assert ende == "2027-05-31"
+
+
+def test_saison_im_januar_gehoert_zum_vorjahr():
+    start, ende = saison_zeitraum(heute=date(2027, 1, 15))
+    assert start == "2026-09-15"
+    assert ende == "2027-05-31"
+
+
+def test_waehrend_der_pause_zaehlt_die_kommende_saison():
+    """Anfang September wird bereits fuer die neue Saison gebucht."""
+    start, _ = saison_zeitraum(heute=date(2026, 9, 4))
+    assert start == "2026-09-15"
+
+
+def test_saison_am_ersten_tag():
+    start, _ = saison_zeitraum(heute=date(2026, 9, 15))
+    assert start == "2026-09-15"
+
+
+def test_saison_am_letzten_tag():
+    start, ende = saison_zeitraum(heute=date(2027, 5, 31))
+    assert start == "2026-09-15" and ende == "2027-05-31"
+
+
+def test_saison_folgt_der_konfigurierten_pause():
+    start, ende = saison_zeitraum(pause_start="07-01", pause_end="08-31",
+                                  heute=date(2026, 10, 1))
+    assert start == "2026-09-01"
+    assert ende == "2027-06-30"
+
+
+def test_saison_bei_unbrauchbarer_konfiguration():
+    """Faellt auf die Standardpause zurueck statt abzustuerzen."""
+    start, _ = saison_zeitraum(pause_start="kaputt", pause_end="auch kaputt",
+                               heute=date(2026, 10, 1))
+    assert start == "2026-09-15"

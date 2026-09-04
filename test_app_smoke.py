@@ -220,3 +220,40 @@ def test_ohne_sperrung_gelten_weiter_feiertag_und_pause(app, monkeypatch):
     assert app.block_reason("2026-12-25").startswith("Feiertag")
     assert app.is_blocked("2026-07-01")
     assert app.block_reason("2026-07-01") == "Saisonpause"
+
+
+# ===== NEUE FUNKTIONEN =====
+
+def test_datenschutzseite_vorhanden(app):
+    assert callable(getattr(app, 'datenschutz_page', None))
+
+
+def test_vertretung_und_bilanz_vorhanden(app):
+    for name in ['saison_zeitraum', 'dienstdauer_stunden']:
+        assert callable(getattr(app, name, None)), f"{name} fehlt"
+    for name in ['set_replacement_wanted', 'takeover_booking']:
+        assert callable(getattr(app.WasserwachtDB, name, None)), f"{name} fehlt"
+
+
+def test_buchung_hat_transaktion_und_rueckfall(app):
+    """Beide Wege muessen existieren - der Rueckfall traegt die Verfuegbarkeit."""
+    for name in ['_buchung_transaktional', '_buchung_einfach']:
+        assert callable(getattr(app.WasserwachtDB, name, None)), f"{name} fehlt"
+
+
+def test_module_fuer_kalender_und_import_eingebunden(app):
+    assert callable(getattr(app.ics, 'baue_ics', None))
+    assert callable(getattr(app.nutzerimport, 'lies_nutzerliste', None))
+
+
+def test_dienstdauer_ueber_die_app(app):
+    assert app.dienstdauer_stunden({'slot_time': '17:00 - 20:00'}) == 3.0
+
+
+def test_router_kennt_datenschutz():
+    """Die Seite muss auch erreichbar sein, nicht nur existieren."""
+    import pathlib
+    quelle = (pathlib.Path(__file__).parent / 'streamlit_app.py').read_text(
+        encoding='utf-8')
+    assert "elif page == 'datenschutz':" in quelle
+    assert "('datenschutz', " in quelle

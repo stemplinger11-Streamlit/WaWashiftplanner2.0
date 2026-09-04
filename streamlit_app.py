@@ -28,6 +28,8 @@ from collections import Counter
 import core_rules as rules
 import core_theme as theme
 import core_reminders as reminders
+import core_ics as ics
+import core_import as nutzerimport
 import core_styles as styles
 from core_rules import (
     DEFAULT_PAUSE_START,
@@ -178,6 +180,16 @@ def is_blocked(d):
 def block_reason(d):
     return rules.block_reason(d, *get_pause_range(),
                               gesperrte=get_blocked_dates())
+
+def saison_zeitraum(pause_end=None):
+    """Start und Ende der laufenden Saison."""
+    start, ende = get_pause_range()
+    return rules.saison_zeitraum(start, ende)
+
+
+def dienstdauer_stunden(buchung):
+    return rules.dienstdauer_stunden(buchung)
+
 
 def can_cancel(slot_date_str, slot_time_str, is_admin=False, now=None):
     """Stornoregel mit der in den Einstellungen gepflegten Frist."""
@@ -612,24 +624,100 @@ class WasserwachtDB:
             except:
                 return []
     
-    def create_booking(self,slot_date,slot_time,user_email,user_name,user_phone):
+    def create_booking(self, slot_date, slot_time, user_email, user_name,
+                       user_phone):
+        """Buchung anlegen.
+
+        Pruefen und Schreiben laufen in einer Transaktion, damit zwei
+        gleichzeitige Klicks nicht beide eine Zusage erhalten. Bis V9 waren
+        das zwei getrennte Schritte; im Zweifel hielten sich zwei Leute
+        fuer eingeteilt.
+
+        Scheitert die Transaktion aus technischen Gruenden, wird auf den
+        bisherigen Weg zurueckgefallen. Der ist nicht atomar, aber die
+        Buchung kommt zustande - schlechter als zuvor wird es dadurch nie.
+        """
+        daten = {
+            'slot_date': slot_date, 'slot_time': slot_time,
+            'user_email': user_email, 'user_name': user_name,
+            'user_phone': user_phone, 'status': 'confirmed',
+            'created_at': firestore.SERVER_TIMESTAMP,
+        }
         try:
-            existing = self.get_booking(slot_date,slot_time)
-            if existing:
-                return False,"Slot bereits gebucht"
-            
-            self.db.collection('bookings').add({
-                'slot_date':slot_date,'slot_time':slot_time,
-                'user_email':user_email,'user_name':user_name,
-                'user_phone':user_phone,'status':'confirmed',
-                'created_at':firestore.SERVER_TIMESTAMP
-            })
-            print(f"✅ Buchung erstellt: {user_name} | {slot_date} {slot_time}")
-            return True,"Buchung erfolgreich"
+            return self._buchung_transaktional(slot_date, slot_time, daten)
         except Exception as e:
-            print(f"❌ create_booking Fehler: {e}")
-            return False,str(e)
-    
+            print(f"[Hinweis] Transaktion nicht moeglich, einfacher Weg: {e}")
+            return self._buchung_einfach(slot_date, slot_time, daten)
+
+    def _buchung_transaktional(self, slot_date, slot_time, daten):
+        """Lesen und Schreiben in einem Zug."""
+        sammlung = self.db.collection('bookings')
+        abfrage = (sammlung
+                   .where('slot_date', '==', slot_date)
+                   .where('slot_time', '==', slot_time)
+                   .where('status', '==', 'confirmed')
+                   .limit(1))
+
+        @firestore.transactional
+        def _anlegen(transaktion):
+            # Firestore verlangt: erst alle Lese-, dann die Schreibzugriffe
+            if list(abfrage.stream(transaction=transaktion)):
+                return False, "Slot bereits gebucht"
+            transaktion.set(sammlung.document(), daten)
+            return True, "Buchung erfolgreich"
+
+        erfolg, meldung = _anlegen(self.db.transaction())
+        if erfolg:
+            print(f"[OK] Buchung: {daten.get('user_name')} | {slot_date} {slot_time}")
+        return erfolg, meldung
+
+    def _buchung_einfach(self, slot_date, slot_time, daten):
+        """Rueckfall ohne Transaktion - Verhalten wie bis V9."""
+        try:
+            if self.get_booking(slot_date, slot_time):
+                return False, "Slot bereits gebucht"
+            self.db.collection('bookings').add(daten)
+            print(f"[OK] Buchung: {daten.get('user_name')} | {slot_date} {slot_time}")
+            return True, "Buchung erfolgreich"
+        except Exception as e:
+            print(f"[Fehler] create_booking: {e}")
+            return False, str(e)
+
+    def set_replacement_wanted(self, bid, gesucht, grund=""):
+        """Buchung als 'Vertretung gesucht' markieren oder das zuruecknehmen."""
+        try:
+            self.db.collection('bookings').document(bid).update({
+                'replacement_wanted': bool(gesucht),
+                'replacement_reason': grund if gesucht else "",
+            })
+            return True
+        except Exception as e:
+            print(f"[Fehler] set_replacement_wanted: {e}")
+            return False
+
+    def takeover_booking(self, alte_buchung, neuer_nutzer):
+        """Eine zur Vertretung angebotene Buchung uebernehmen.
+
+        Gleiche Reihenfolge wie bei der Umbuchung: erst stornieren, dann neu
+        anlegen, bei Fehlschlag zuruecknehmen. Der Termin bleibt so nie
+        unbesetzt zurueck.
+        """
+        if not self.cancel_booking(
+                alte_buchung['id'],
+                f"Vertretung durch {neuer_nutzer.get('email')}"):
+            return False, "Die bisherige Buchung konnte nicht storniert werden"
+
+        erfolg, meldung = self.create_booking(
+            alte_buchung['slot_date'], alte_buchung['slot_time'],
+            neuer_nutzer.get('email'), neuer_nutzer.get('name'),
+            neuer_nutzer.get('phone', ''))
+
+        if not erfolg:
+            self.restore_booking(alte_buchung['id'])
+            return False, f"Übernahme fehlgeschlagen: {meldung}"
+        return True, "Übernahme erfolgreich"
+
+
     def get_booking(self,slot_date,slot_time):
         try:
             for doc in self.db.collection('bookings')\
@@ -1346,6 +1434,7 @@ def show_navigation():
             ('statistik', '📊 Statistik'),
             ('handbuch', '📖 Handbuch'),
             ('impressum', '⚖️ Impressum'),
+            ('datenschutz', '🔐 Datenschutz'),
         ]
         
         if is_admin:
@@ -1425,6 +1514,29 @@ def show_navigation():
 
         st.divider()
         
+        # ===== AUF DEM HANDY ABLEGEN =====
+        # Ueber das Browsermenue geht das laengst - nur findet es dort kaum
+        # jemand. Deshalb der Hinweis direkt in der App.
+        with st.expander("📱 Auf dem Handy ablegen"):
+            st.caption("Danach startet der Dienstplan wie eine App – ohne "
+                       "Adresszeile, mit eigenem Symbol.")
+            st.markdown("""
+**iPhone / iPad (Safari)**
+1. Auf **Teilen** tippen (Quadrat mit Pfeil nach oben)
+2. Nach unten wischen zu **Zum Home-Bildschirm**
+3. **Hinzufügen** antippen
+
+**Android (Chrome)**
+1. Oben rechts auf die **drei Punkte** tippen
+2. **Zum Startbildschirm hinzufügen** wählen
+3. **Hinzufügen** antippen
+            """)
+            st.caption("Am Rechner geht es ebenso: In Chrome oder Edge "
+                       "erscheint rechts in der Adresszeile ein "
+                       "Installations-Symbol.")
+
+        st.divider()
+
         if st.button("🚪 Abmelden", use_container_width=True):
             logout()
         
@@ -1496,6 +1608,10 @@ def kalender_page():
             status_class = "blocked"
             status_text = f"🚫 Blockiert ({reason})"
             status_icon = "🚫"
+        elif booking and booking.get('replacement_wanted'):
+            status_class = "booked"
+            status_text = f"🔎 Vertretung gesucht ({booking.get('user_name', 'N/A')})"
+            status_icon = "🔎"
         elif booking:
             status_class = "booked"
             status_text = f"✅ Gebucht von {booking.get('user_name', 'N/A')}"
@@ -1528,6 +1644,38 @@ def kalender_page():
         # ===== AKTIONEN (WIE IM ORIGINAL) =====
         if not blocked:
             if booking:
+                # ===== VERTRETUNG UEBERNEHMEN =====
+                # Sichtbar fuer alle ausser der Person, die den Dienst
+                # aktuell haelt - die kann ihn nur zurueckziehen.
+                if (booking.get('replacement_wanted')
+                        and booking.get('user_email') != user.get('email')):
+                    if booking.get('replacement_reason'):
+                        st.caption(f"Grund: {booking['replacement_reason']}")
+                    if st.button(
+                            f"🤝 Dienst von {booking.get('user_name', '')} übernehmen",
+                            key=f"uebernehmen_{sd}_{slot_config['start']}",
+                            use_container_width=True, type="primary"):
+                        erfolg, meldung = ww_db.takeover_booking(booking, user)
+                        if erfolg:
+                            slot_zeit = f"{slot_config['start']} - {slot_config['end']}"
+                            # Beide informieren: die abgebende Person ueber die
+                            # Stornierung, die uebernehmende ueber die Buchung.
+                            vorher = ww_db.get_user(booking.get('user_email')) or {}
+                            if notify_pref(vorher, 'email', 'cancellation'):
+                                mailer.send_cancellation(
+                                    booking.get('user_email'),
+                                    booking.get('user_name'), sd, slot_zeit,
+                                    comment=f"Übernommen von {user.get('name')}")
+                            if notify_pref(user, 'email', 'booking'):
+                                mailer.send_booking_confirmation(
+                                    user.get('email'), user.get('name'),
+                                    sd, slot_zeit)
+                            st.success(f"✅ {meldung} – der Dienst gehört jetzt dir.")
+                            st.balloons()
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {meldung}")
+
                 # Gebuchter Slot
                 is_admin_user = user.get('role') == 'admin'
                 if booking.get('user_email') == user.get('email') or is_admin_user:
@@ -1608,6 +1756,67 @@ def kalender_page():
         
         st.markdown("---")
     
+    # ===== ÜBERSICHT DER NÄCHSTEN WOCHEN =====
+    # Erspart das Durchklicken Woche für Woche, wenn man nur wissen will,
+    # wo noch etwas frei ist.
+    with st.expander("📅 Die nächsten 8 Wochen im Überblick", expanded=False):
+        heute_d = datetime.now().date()
+        ab = week_start(heute_d)
+        bis_d = ab + timedelta(days=7 * 8)
+
+        alle_buchungen = {
+            (b.get('slot_date'), b.get('slot_time')): b
+            for b in ww_db.get_bookings_between(ab.strftime('%Y-%m-%d'),
+                                                bis_d.strftime('%Y-%m-%d'))
+        }
+
+        uebersicht = []
+        for woche in range(8):
+            ws_u = ab + timedelta(days=7 * woche)
+            for sc in WEEKLY_SLOTS:
+                tag = slot_date(ws_u, sc['day'])
+                if datetime.strptime(tag, '%Y-%m-%d').date() < heute_d:
+                    continue
+
+                zeit = f"{sc['start']} - {sc['end']}"
+                grund_u = block_reason(tag)
+                gebucht = alle_buchungen.get((tag, zeit))
+
+                if grund_u:
+                    status = f"🚫 {grund_u}"
+                elif gebucht and gebucht.get('replacement_wanted'):
+                    status = f"🔎 Vertretung gesucht ({gebucht.get('user_name', '')})"
+                elif gebucht:
+                    status = f"✅ {gebucht.get('user_name', '')}"
+                else:
+                    status = "✨ Frei"
+
+                uebersicht.append({
+                    'Datum': fmt_de(tag),
+                    'Tag': sc['day_name'],
+                    'Uhrzeit': zeit,
+                    'Status': status,
+                })
+
+        if uebersicht:
+            frei_anzahl = sum(1 for z in uebersicht if z['Status'].startswith('✨'))
+            gesucht_anzahl = sum(1 for z in uebersicht if z['Status'].startswith('🔎'))
+
+            col_u1, col_u2, col_u3 = st.columns(3)
+            with col_u1:
+                st.metric("Termine", len(uebersicht))
+            with col_u2:
+                st.metric("✨ Frei", frei_anzahl)
+            with col_u3:
+                st.metric("🔎 Vertretung gesucht", gesucht_anzahl)
+
+            st.dataframe(pd.DataFrame(uebersicht), use_container_width=True,
+                         hide_index=True)
+            st.caption("💡 Gebucht wird weiterhin oben in der Wochenansicht.")
+        else:
+            st.info("Keine Termine in den nächsten 8 Wochen.")
+
+
     # ===== ADMIN-ÜBERSICHT =====
     if user.get('role') == 'admin':
         st.divider()
@@ -1622,28 +1831,65 @@ def kalender_page():
 # ===== MEINE BUCHUNGEN =====
 def meine_buchungen_page():
     user = st.session_state.user
-    
+
     st.title("📋 Meine Buchungen")
-    
+
     bookings = ww_db.get_user_bookings(user['email'], future_only=False)
-    
+
     if not bookings:
         st.info("Du hast noch keine Buchungen.")
         return
-    
-    # Nach zukünftig/vergangen filtern
+
     today = datetime.now().date().strftime("%Y-%m-%d")
     future = [b for b in bookings if b['slot_date'] >= today]
     past = [b for b in bookings if b['slot_date'] < today]
-    
-    tab1, tab2 = st.tabs([f"🔜 Zukünftig ({len(future)})", f"📅 Vergangen ({len(past)})"])
-    
+
+    # ===== EIGENE DIENSTBILANZ =====
+    # Die Statistikseite zeigt nur die Rangliste aller Helfer. Hier steht,
+    # was fuer den eigenen Nachweis zaehlt.
+    pause_start, pause_end = get_pause_range()
+    saison = saison_zeitraum(pause_end)
+    in_saison = [b for b in bookings if saison[0] <= b['slot_date'] <= saison[1]]
+    stunden = sum(dienstdauer_stunden(b) for b in in_saison)
+
+    col_b1, col_b2, col_b3 = st.columns(3)
+    with col_b1:
+        st.metric("Dienste diese Saison", len(in_saison))
+    with col_b2:
+        st.metric("Stunden diese Saison", f"{stunden:g}")
+    with col_b3:
+        st.metric("Dienste insgesamt", len(bookings))
+    st.caption(f"Saison {fmt_de(saison[0])} bis {fmt_de(saison[1])}")
+
+    # ===== KALENDER-EXPORT =====
+    if future:
+        kalender = ics.baue_ics(
+            future,
+            kalendername=f"{ww_db.get_setting('org_name', 'Wasserwacht')} – meine Dienste",
+            titel=f"Dienst {ww_db.get_setting('org_name', 'Wasserwacht')}")
+        st.download_button(
+            "📅 Termine in den Kalender übernehmen",
+            kalender.encode('utf-8'),
+            file_name="meine_dienste.ics",
+            mime="text/calendar",
+            use_container_width=True,
+            help="Lädt eine Kalenderdatei herunter. Auf dem Handy genügt ein "
+                 "Tippen darauf, um die Termine einzutragen.")
+
+    st.divider()
+
+    tab1, tab2 = st.tabs([f"🔜 Zukünftig ({len(future)})",
+                          f"📅 Vergangen ({len(past)})"])
+
     with tab1:
         if not future:
             st.info("Keine zukünftigen Buchungen.")
         else:
             for b in future:
-                with st.expander(f"{fmt_de(b['slot_date'])} - {b.get('slot_time', 'N/A')}", expanded=True):
+                titel = f"{fmt_de(b['slot_date'])} - {b.get('slot_time', 'N/A')}"
+                if b.get('replacement_wanted'):
+                    titel += "  ·  Vertretung gesucht"
+                with st.expander(titel, expanded=True):
                     st.markdown(f"**📅 Datum:** {fmt_de(b['slot_date'])}")
                     st.markdown(f"**⏰ Zeit:** {b.get('slot_time', 'N/A')}")
                     st.markdown(f"**📧 E-Mail:** {b['user_email']}")
@@ -1651,7 +1897,38 @@ def meine_buchungen_page():
                         st.markdown(f"**📱 Telefon:** {b['user_phone']}")
                     if b.get('admin_note'):
                         st.info(f"📌 **Hinweis:** {b['admin_note']}")
-                    
+
+                    # ===== VERTRETUNG SUCHEN =====
+                    if b.get('replacement_wanted'):
+                        st.warning(
+                            "🔎 Dieser Dienst ist als **Vertretung gesucht** "
+                            "ausgeschrieben. Andere sehen ihn im Kalender und "
+                            "können ihn übernehmen. Bis dahin bleibt er bei dir.")
+                        if b.get('replacement_reason'):
+                            st.caption(f"Grund: {b['replacement_reason']}")
+                        if st.button("↩️ Suche zurückziehen",
+                                     key=f"vertretung_aus_{b['id']}"):
+                            if ww_db.set_replacement_wanted(b['id'], False):
+                                st.success("✅ Der Dienst ist wieder fest bei dir.")
+                                st.rerun()
+                    else:
+                        with st.popover("🔎 Vertretung suchen",
+                                        use_container_width=True):
+                            st.caption(
+                                "Der Dienst bleibt bei dir, wird aber im "
+                                "Kalender zur Übernahme angeboten.")
+                            grund = st.text_input(
+                                "Grund (optional)",
+                                key=f"vertretung_grund_{b['id']}",
+                                placeholder="z. B. krank, Urlaub")
+                            if st.button("Ausschreiben",
+                                         key=f"vertretung_an_{b['id']}",
+                                         type="primary"):
+                                if ww_db.set_replacement_wanted(
+                                        b['id'], True, grund.strip()):
+                                    st.success("✅ Ausgeschrieben")
+                                    st.rerun()
+
                     allowed, hinweis = can_cancel(
                         b['slot_date'], b.get('slot_time', ''),
                         is_admin=user.get('role') == 'admin'
@@ -1669,16 +1946,20 @@ def meine_buchungen_page():
                             st.rerun()
                         else:
                             st.error("❌ Fehler bei der Stornierung")
-    
+
     with tab2:
         if not past:
             st.info("Keine vergangenen Buchungen.")
         else:
             for b in past:
-                with st.expander(f"{fmt_de(b['slot_date'])} - {b.get('slot_time', 'N/A')}"):
+                with st.expander(f"{fmt_de(b['slot_date'])} - "
+                                 f"{b.get('slot_time', 'N/A')}"):
                     st.markdown(f"**📅 Datum:** {fmt_de(b['slot_date'])}")
                     st.markdown(f"**⏰ Zeit:** {b.get('slot_time', 'N/A')}")
                     st.markdown(f"**Status:** {b.get('status', 'confirmed')}")
+                    if b.get('admin_note'):
+                        st.caption(f"📌 {b['admin_note']}")
+
 
 # ===== PROFIL-SEITE (FÜR ALLE USER) =====
 def profil_page():
@@ -2832,13 +3113,13 @@ def benutzer_page():
         st.caption("☝️ Bitte jetzt notieren – diese Anzeige erscheint nur einmal.")
         st.divider()
 
-    tab_labels = ["📋 Alle Benutzer", "➕ Neuer Benutzer"]
+    tab_labels = ["📋 Alle Benutzer", "➕ Neuer Benutzer", "📥 Liste importieren"]
     if pending:
         tab_labels.insert(0, f"⏳ Offene Freigaben ({len(pending)})")
-        tab_pending, tab1, tab2 = st.tabs(tab_labels)
+        tab_pending, tab1, tab2, tab_import = st.tabs(tab_labels)
     else:
         tab_pending = None
-        tab1, tab2 = st.tabs(tab_labels)
+        tab1, tab2, tab_import = st.tabs(tab_labels)
 
     # ===== OFFENE FREIGABEN =====
     if tab_pending is not None:
@@ -3069,6 +3350,123 @@ def benutzer_page():
                     else:
                         st.error(f"❌ {msg}")
 
+    # ===== LISTE IMPORTIEREN =====
+    with tab_import:
+        st.subheader("📥 Nutzerliste importieren")
+        st.caption("Für den Saisonstart: mehrere Konten auf einmal anlegen, "
+                   "statt jedes einzeln einzutippen.")
+
+        st.markdown("**Erwartet wird eine CSV-Datei mit den Spalten "
+                    "`Name`, `E-Mail` und optional `Telefon`.**")
+        st.caption("Semikolon oder Komma als Trennzeichen, Reihenfolge der "
+                   "Spalten egal, zusätzliche Spalten werden ignoriert.")
+
+        st.download_button(
+            "📄 Beispieldatei herunterladen",
+            nutzerimport.BEISPIEL_CSV.encode('utf-8-sig'),
+            file_name="nutzerliste_vorlage.csv",
+            mime="text/csv")
+
+        datei = st.file_uploader("CSV-Datei", type=['csv', 'txt'])
+
+        if datei is not None:
+            try:
+                roh = datei.getvalue().decode('utf-8-sig')
+            except UnicodeDecodeError:
+                # Excel schreibt unter Windows gern in der ANSI-Codepage
+                roh = datei.getvalue().decode('cp1252', errors='replace')
+
+            eintraege, fehler = nutzerimport.lies_nutzerliste(roh)
+
+            if fehler:
+                st.error(f"❌ {len(fehler)} Zeile(n) konnten nicht gelesen werden")
+                with st.expander("Was genau", expanded=not eintraege):
+                    for nummer, text in fehler:
+                        wo = f"Zeile {nummer}: " if nummer else ""
+                        st.markdown(f"- {wo}{text}")
+
+            if eintraege:
+                # Wer schon ein Konto hat, wird uebersprungen statt zu stoeren
+                vorhandene = {u.get('email', '').lower()
+                              for u in ww_db.get_all_users()}
+                neue = [e for e in eintraege if e['email'] not in vorhandene]
+                bekannte = [e for e in eintraege if e['email'] in vorhandene]
+
+                st.success(f"✅ {len(eintraege)} Zeile(n) gelesen")
+                col_i1, col_i2 = st.columns(2)
+                with col_i1:
+                    st.metric("Neu anzulegen", len(neue))
+                with col_i2:
+                    st.metric("Schon vorhanden", len(bekannte))
+
+                if bekannte:
+                    with st.expander("Bereits vorhanden – wird übersprungen"):
+                        for e in bekannte:
+                            st.markdown(f"- {e['name']} ({e['email']})")
+
+                if neue:
+                    st.dataframe(pd.DataFrame(neue), use_container_width=True,
+                                 hide_index=True)
+
+                    with st.form("import_bestaetigen"):
+                        st.markdown("**Anlegen**")
+                        sofort_aktiv = st.checkbox(
+                            "Konten sofort freischalten", value=True,
+                            help="Ausgeschaltet müssen die Konten wie eine "
+                                 "normale Registrierung erst freigegeben werden.")
+                        mail_senden = st.checkbox(
+                            "Zugangsdaten per E-Mail versenden", value=True,
+                            help="Jede Person erhält ein zufälliges Passwort. "
+                                 "Ohne Versand musst du es selbst weitergeben.")
+
+                        if st.form_submit_button(
+                                f"📥 {len(neue)} Konto/Konten anlegen",
+                                type="primary", use_container_width=True):
+                            fortschritt = st.progress(0.0, text="Wird angelegt …")
+                            angelegt, misslungen, ohne_mail = 0, [], []
+
+                            for i, e in enumerate(neue, start=1):
+                                passwort = generate_random_password(10)
+                                erfolg, meldung = ww_db.create_user(
+                                    e['email'], e['name'], e['phone'], passwort,
+                                    active=sofort_aktiv,
+                                    pending_approval=not sofort_aktiv)
+
+                                if not erfolg:
+                                    misslungen.append((e['email'], meldung))
+                                else:
+                                    angelegt += 1
+                                    if mail_senden:
+                                        ok, _ = mailer.send_password_reset(
+                                            e['email'], e['name'], passwort)
+                                        if not ok:
+                                            ohne_mail.append((e['email'], passwort))
+                                    else:
+                                        ohne_mail.append((e['email'], passwort))
+
+                                fortschritt.progress(
+                                    i / len(neue),
+                                    text=f"Wird angelegt … {i}/{len(neue)}")
+
+                            fortschritt.empty()
+                            if angelegt:
+                                st.success(f"✅ {angelegt} Konto/Konten angelegt")
+                            if misslungen:
+                                st.error(f"❌ {len(misslungen)} fehlgeschlagen")
+                                for adresse, meldung in misslungen:
+                                    st.markdown(f"- **{adresse}** — {meldung}")
+                            if ohne_mail:
+                                st.warning(
+                                    "⚠️ Diese Zugangsdaten müssen persönlich "
+                                    "weitergegeben werden – sie erscheinen nur "
+                                    "jetzt, einmalig:")
+                                st.code("\n".join(
+                                    f"{adresse}: {pw}" for adresse, pw in ohne_mail),
+                                    language=None)
+                else:
+                    st.info("Alle Adressen aus der Datei haben bereits ein Konto.")
+
+
 # ===== EXPORT (ADMIN) =====
 def export_page():
     st.title("💾 Export & Backup")
@@ -3127,6 +3525,19 @@ def export_page():
             st.error(f"Benutzer konnten nicht geladen werden: {e}")
 
         confirmed = [b for b in bookings_raw if b.get('status') == 'confirmed']
+
+        if confirmed:
+            st.download_button(
+                f"📅 Alle Dienste als Kalenderdatei ({len(confirmed)})",
+                ics.baue_ics(
+                    confirmed,
+                    kalendername=ww_db.get_setting('org_name', 'Wasserwacht'),
+                    titel="Dienst " + ww_db.get_setting('org_name', 'Wasserwacht')
+                ).encode('utf-8'),
+                file_name=f"dienstplan_{stamp}.ics",
+                mime="text/calendar",
+                use_container_width=True)
+
         if confirmed:
             df_export = pd.DataFrame(confirmed)
             st.download_button(
@@ -3794,6 +4205,112 @@ Freigeben unter: Benutzer -> Offene Freigaben"""
             
             st.caption("💡 So wird die Nachricht mit Beispieldaten aussehen")
 
+# ===== DATENSCHUTZ (MIT EDIT-FUNKTION) =====
+def datenschutz_page():
+    user = st.session_state.user
+    is_admin = user.get('role') == 'admin'
+
+    st.title("🔐 Datenschutz")
+
+    inhalt = ww_db.get_setting('datenschutz_content', '')
+    ist_entwurf = not inhalt
+
+    if ist_entwurf:
+        org = ww_db.get_setting('org_name', 'Wasserwacht')
+        empfang = mailer.admin_receiver or 'die im Impressum genannte Adresse'
+        inhalt = f"""
+## Datenschutzerklärung
+
+### 1. Verantwortlich
+
+Verantwortlich für die Verarbeitung der Daten in diesem Dienstplan ist
+{org}. Die Kontaktdaten stehen im Impressum.
+
+### 2. Welche Daten verarbeitet werden
+
+- **Name** – zur Zuordnung der Dienste
+- **E-Mail-Adresse** – als Anmeldename und für Benachrichtigungen
+- **Telefonnummer** (freiwillig) – nur für SMS-Benachrichtigungen
+- **Passwort** – ausschließlich als nicht rückrechenbarer Hash gespeichert
+- **Buchungen** – welcher Termin von wem übernommen wurde, samt Zeitpunkt
+  der Buchung und einer etwaigen Stornierung
+
+### 3. Wozu
+
+Die Daten werden ausschließlich für die Einteilung und Verwaltung der
+Dienste verwendet sowie für die damit verbundenen Benachrichtigungen.
+Rechtsgrundlage ist die Erfüllung der Mitgliedschaftspflichten
+(Art. 6 Abs. 1 lit. b DSGVO) sowie das berechtigte Interesse an einer
+geordneten Diensteinteilung (Art. 6 Abs. 1 lit. f DSGVO).
+
+Eine Weitergabe zu Werbezwecken findet nicht statt.
+
+### 4. Wer die Daten technisch verarbeitet
+
+- **Google Firestore** (Google Ireland Limited) – Speicherung der Daten
+- **Streamlit / Snowflake Inc.** – Betrieb der Anwendung
+- **Twilio** – nur bei aktiviertem SMS-Versand, und nur die Telefonnummer
+
+Mit diesen Anbietern bestehen Verträge zur Auftragsverarbeitung.
+
+### 5. Wie lange
+
+Zugangsdaten bleiben gespeichert, solange das Konto besteht. Buchungen
+werden nach zwölf Monaten archiviert. Nach dem Austritt aus dem Verein
+wird das Konto auf Anforderung gelöscht.
+
+### 6. Deine Rechte
+
+Auskunft, Berichtigung, Löschung, Einschränkung der Verarbeitung,
+Datenübertragbarkeit und Widerspruch. Dazu genügt eine Nachricht an
+{empfang}. Ebenso besteht ein Beschwerderecht bei der zuständigen
+Aufsichtsbehörde – in Bayern das Bayerische Landesamt für Datenschutzaufsicht.
+
+### 7. Cookies
+
+Diese Anwendung setzt ein einziges Cookie, und nur dann, wenn beim
+Anmelden „Angemeldet bleiben" gewählt wurde. Es enthält eine zufällige
+Kennung, keine personenbezogenen Daten, und dient allein dazu, die
+Anmeldung aufrechtzuerhalten. Analyse- oder Werbe-Cookies werden nicht
+gesetzt.
+"""
+
+    if is_admin:
+        if ist_entwurf:
+            st.warning(
+                "⚠️ **Entwurf – noch nicht veröffentlicht.** Dieser Text ist eine "
+                "Vorlage und wurde nicht juristisch geprüft. Bitte inhaltlich "
+                "prüfen, an die Gegebenheiten des Vereins anpassen und dann "
+                "speichern. Erst danach gilt er als eure Datenschutzerklärung.")
+
+        tab_ansicht, tab_bearbeiten = st.tabs(["🔐 Ansicht", "✏️ Bearbeiten"])
+
+        with tab_ansicht:
+            st.markdown(inhalt, unsafe_allow_html=True)
+
+        with tab_bearbeiten:
+            st.info("💡 Markdown zur Formatierung. Änderungen gelten für alle Nutzer.")
+            bearbeitet = st.text_area(
+                "Datenschutzerklärung (Markdown)", value=inhalt, height=500)
+
+            col_a, col_b = st.columns([2, 8])
+            with col_a:
+                if st.button("💾 Speichern", type="primary",
+                             use_container_width=True):
+                    if ww_db.set_setting('datenschutz_content', bearbeitet):
+                        st.success("✅ Gespeichert")
+                        st.rerun()
+                    else:
+                        st.error("❌ Fehler beim Speichern")
+
+            with st.expander("👁️ Vorschau", expanded=True):
+                st.markdown(bearbeitet, unsafe_allow_html=True)
+    else:
+        if ist_entwurf:
+            st.info("Diese Seite wird gerade überarbeitet.")
+        st.markdown(inhalt, unsafe_allow_html=True)
+
+
 # ===== MAIN =====
 def main():
     # CSS injizieren
@@ -3869,6 +4386,9 @@ def main():
         
     elif page == 'impressum':
         impressum_page()
+
+    elif page == 'datenschutz':
+        datenschutz_page()
         
     elif page == 'profil':
         profil_page()

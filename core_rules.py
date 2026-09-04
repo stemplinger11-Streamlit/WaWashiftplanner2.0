@@ -191,3 +191,64 @@ def can_cancel(slot_date_str, slot_time_str, is_admin=False, now=None,
         return False, (f"Stornierung nur bis {deadline_hours} Stunden vor "
                        f"Dienstbeginn möglich. Bitte wende dich an einen Admin.")
     return True, None
+
+
+def dienstdauer_stunden(buchung):
+    """Laenge eines Dienstes in Stunden, aus 'slot_time' gelesen.
+
+    Unlesbare Angaben ergeben 0, damit eine einzelne kaputte Buchung keine
+    Summe verfaelscht oder einen Absturz ausloest.
+    """
+    zeit = str((buchung or {}).get('slot_time', ''))
+    if '-' not in zeit:
+        return 0.0
+    try:
+        beginn, ende = [t.strip() for t in zeit.split('-', 1)]
+        a = datetime.strptime(beginn, "%H:%M")
+        b = datetime.strptime(ende, "%H:%M")
+        stunden = (b - a).total_seconds() / 3600
+        if stunden < 0:
+            stunden += 24  # ueber Mitternacht
+        return round(stunden, 2)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def saison_zeitraum(pause_start=DEFAULT_PAUSE_START,
+                    pause_end=DEFAULT_PAUSE_END, heute=None):
+    """(start, ende) der laufenden Saison als 'YYYY-MM-TT'.
+
+    Die Saison beginnt am Tag nach dem Ende der Pause und endet am Tag vor
+    ihrem naechsten Beginn. Faellt 'heute' selbst in die Pause, ist die
+    kommende Saison gemeint - dann wird ja bereits fuer sie gebucht.
+    """
+    heute = heute or datetime.now().date()
+    if hasattr(heute, 'date'):
+        heute = heute.date()
+
+    def monat_tag(wert, ersatz):
+        """'MM-TT' -> (monat, tag). Ohne strptime, weil das ohne Jahresangabe
+        ab Python 3.15 anders arbeitet."""
+        try:
+            monat, tag = wert.split('-')
+            monat, tag = int(monat), int(tag)
+            date(2000, monat, tag)  # wirft bei unmoeglichen Werten
+            return monat, tag
+        except (ValueError, TypeError, AttributeError):
+            monat, tag = ersatz.split('-')
+            return int(monat), int(tag)
+
+    start_md = monat_tag(pause_start, DEFAULT_PAUSE_START)
+    ende_md = monat_tag(pause_end, DEFAULT_PAUSE_END)
+
+    jahr = heute.year
+    saison_beginn = date(jahr, ende_md[0], ende_md[1]) + timedelta(days=1)
+
+    # Vor dem Saisonbeginn dieses Jahres laeuft noch die Saison des Vorjahres -
+    # es sei denn, wir stecken schon in der Pause, dann zaehlt die kommende.
+    if heute < saison_beginn and not is_in_pause(heute, pause_start, pause_end):
+        saison_beginn = date(jahr - 1, ende_md[0], ende_md[1]) + timedelta(days=1)
+
+    saison_ende = date(saison_beginn.year + 1, start_md[0],
+                       start_md[1]) - timedelta(days=1)
+    return saison_beginn.strftime("%Y-%m-%d"), saison_ende.strftime("%Y-%m-%d")
