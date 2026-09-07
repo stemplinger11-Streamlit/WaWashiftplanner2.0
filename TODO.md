@@ -1,12 +1,16 @@
 # TODO — Wasserwacht Dienstplan 2.0
 
-Stand: 02.09.2026 · Basis: `streamlit_app.py` V9.0
+Stand: 07.09.2026 · `streamlit_app.py` V9.0 auf Streamlit 1.63 / Python 3.14
 
-**Erledigt:** P0 1–6, P1 8–15, P2 16, 17, 18, P3 20, 21, 22, 23, 24, 26.
-**Offen:** P1 7 (Erinnerungen: gebaut, Zeitplan noch deaktiviert),
-P3 25 (Modularisierung), 27 (Doppelbuchung).
+**Aus der Bestandsaufnahme erledigt:** P0 1–6, P1 8–15, P2 16–19,
+P3 20–24, 26, 27.
+**Davon offen:** P1 7 (Erinnerungen: gebaut, Zeitplan bewusst deaktiviert),
+P3 25 (Modularisierung, nach der Saison).
 
-**Tests:** 195, laufen ohne Firebase und ohne Streamlit (`python -m pytest -q`).
+**Was du selbst tun musst:** siehe Abschnitt „Offen" weiter unten –
+Firestore-Index, Datenschutztext freigeben, Fehlermeldungen abschalten.
+
+**Tests:** 350, laufen ohne Firebase und ohne Streamlit (`python -m pytest -q`).
 
 ---
 
@@ -237,17 +241,28 @@ Browser-Lesezeichen: kein eigenes Symbol, kein Offline-Betrieb. Eine richtige
 PWA bräuchte Zugriff auf die ausgelieferte `index.html`, den Streamlit Cloud
 nicht gewährt. **Entscheidung: eigenes Hosting oder so belassen.**
 
-### D. Fehlermeldungen vor dem Saisonstart abschalten
+### D. Firestore-Index anlegen
+In der [Firebase Console](https://console.firebase.google.com) unter
+*Firestore Database → Indexes → Zusammengesetzt*: Collection `bookings`,
+Felder `status` (aufsteigend) und `slot_date` (aufsteigend).
+
+Ohne den Index läuft die App weiter, fällt aber auf das Laden **aller**
+Buchungen mit Filterung im Speicher zurück. Das wird mit wachsender
+Datenmenge langsam und verbraucht unnötig Lesekontingent. Firestore
+verlinkt beim ersten Fehlschlag in der Logausgabe einen fertigen
+Erstellungslink – der schnellste Weg.
+
+### E. Fehlermeldungen vor dem Saisonstart abschalten
 `showErrorDetails` steht bewusst noch auf sichtbar, damit du beim Testen
 echte Meldungen bekommst. **Vor dem Saisonstart in `.streamlit/config.toml`
 umstellen**, sonst sehen Nutzer im Fehlerfall Code-Auszüge.
 
-### E. Erinnerungen scharf schalten
+### F. Erinnerungen scharf schalten
 Das Skript und die GitHub Action stehen, der Zeitplan ist deaktiviert. Vorher
 klären, ob bereits eine andere Stelle Erinnerungen verschickt — sonst kommt
 alles doppelt an.
 
-### F. Aufteilung der Hauptdatei
+### G. Aufteilung der Hauptdatei
 `streamlit_app.py` ist weiter gewachsen. Die Fachlogik liegt inzwischen in
 `core_*.py`, die Oberfläche nicht. Sinnvoll nach der Saison, nicht davor.
 
