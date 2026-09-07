@@ -30,6 +30,7 @@ import core_theme as theme
 import core_reminders as reminders
 import core_ics as ics
 import core_import as nutzerimport
+import core_stats as stats
 import core_styles as styles
 from core_rules import (
     DEFAULT_PAUSE_START,
@@ -2218,39 +2219,162 @@ def profil_page():
 
 # ===== STATISTIK =====
 def statistik_page():
+    user = st.session_state.user
+    eigene_email = (user.get('email') or '').lower()
+
     st.title("📊 Statistik")
-    
-    # Lade alle Buchungen
-    all_bookings = []
+
+    # Alle bestätigten Buchungen mit einer Abfrage
     try:
+        alle = []
         for doc in db.collection('bookings').where('status', '==', 'confirmed').stream():
-            b = doc.to_dict()
-            b['id'] = doc.id
-            all_bookings.append(b)
-    except:
-        st.error("Fehler beim Laden der Statistiken")
+            eintrag = doc.to_dict()
+            eintrag['id'] = doc.id
+            alle.append(eintrag)
+    except Exception as e:
+        st.error(f"Die Auswertung konnte nicht geladen werden: {e}")
         return
-    
-    if not all_bookings:
+
+    if not alle:
         st.info("Noch keine Buchungen vorhanden.")
         return
-    
-    # Top Helfer
-    st.subheader("🏆 Top Helfer")
-    user_counts = Counter([b['user_name'] for b in all_bookings])
-    top_10 = user_counts.most_common(10)
-    
-    if top_10:
-        df_top = pd.DataFrame(top_10, columns=['Name', 'Anzahl Dienste'])
-        fig = px.bar(df_top, x='Name', y='Anzahl Dienste', title='Top 10 Helfer')
-        st.plotly_chart(fig, use_container_width=True)
-    
-    # Buchungen pro Monat
-    st.subheader("📅 Buchungen pro Monat")
-    monthly = Counter([b['slot_date'][:7] for b in all_bookings])
-    df_month = pd.DataFrame(sorted(monthly.items()), columns=['Monat', 'Anzahl'])
-    fig_month = px.line(df_month, x='Monat', y='Anzahl', title='Buchungen pro Monat')
-    st.plotly_chart(fig_month, use_container_width=True)
+
+    # ===== FILTER =====
+    pause_start, pause_end = get_pause_range()
+    saisons = stats.saisons_in_daten(alle, pause_start, pause_end)
+
+    auswahl = ["Gesamter Zeitraum"] + [s[0] for s in saisons]
+    col_f1, col_f2 = st.columns([2, 3])
+
+    with col_f1:
+        gewaehlt = st.selectbox(
+            "Zeitraum", auswahl,
+            index=1 if saisons else 0,
+            help="Standard ist die laufende Saison")
+
+    if gewaehlt == "Gesamter Zeitraum":
+        gefiltert = alle
+        zeitraum_text = "über alle Saisons"
+    else:
+        _, von, bis = next(s for s in saisons if s[0] == gewaehlt)
+        gefiltert = stats.im_zeitraum(alle, von, bis)
+        zeitraum_text = f"{fmt_de(von)} bis {fmt_de(bis)}"
+
+    with col_f2:
+        wochentage = list(stats.pro_wochentag(gefiltert))
+        tag_wahl = st.multiselect(
+            "Wochentage", wochentage, default=[],
+            placeholder="Alle Wochentage",
+            help="Leer lassen zeigt alle")
+
+    if tag_wahl:
+        from datetime import datetime as _dt
+        gefiltert = [
+            b for b in gefiltert
+            if b.get('slot_date') and stats.WOCHENTAGE[
+                _dt.strptime(b['slot_date'], "%Y-%m-%d").weekday()] in tag_wahl
+        ]
+
+    st.caption(f"Auswertung {zeitraum_text}")
+
+    if not gefiltert:
+        st.info("Für diese Auswahl gibt es keine Dienste.")
+        return
+
+    liste = stats.rangliste(gefiltert)
+    kennzahlen = stats.kennzahlen(gefiltert)
+
+    # ===== EIGENER STAND =====
+    eigener = stats.eintrag_von(liste, eigene_email)
+
+    if eigener:
+        st.markdown("### 🏅 Dein Stand")
+        col_e1, col_e2, col_e3 = st.columns(3)
+        with col_e1:
+            st.metric("Platz",
+                      f"{eigener['medaille']} {eigener['platz']}".strip(),
+                      help=f"von {len(liste)} Aktiven in diesem Zeitraum")
+        with col_e2:
+            st.metric("Deine Dienste", eigener['dienste'])
+        with col_e3:
+            st.metric("Deine Stunden", f"{eigener['stunden']:g}")
+
+        if eigener['platz'] == 1:
+            st.success("🥇 Platz 1 – niemand hat mehr Dienste übernommen. Danke!")
+        else:
+            abstand = stats.abstand_nach_oben(liste, eigene_email)
+            if abstand:
+                fehlend, davor = abstand
+                st.info(f"Noch **{fehlend}** Dienst(e), um an **{davor}** "
+                        f"vorbeizuziehen.")
+    else:
+        st.info("In diesem Zeitraum hast du noch keine Dienste übernommen.")
+
+    st.divider()
+
+    # ===== RANGLISTE =====
+    st.markdown("### 🏆 Rangliste")
+
+    tabelle = pd.DataFrame([{
+        '': ('👉' if e['email'] == eigene_email else ''),
+        'Platz': f"{e['medaille']} {e['platz']}".strip(),
+        'Name': e['name'],
+        'Dienste': e['dienste'],
+        'Stunden': e['stunden'],
+    } for e in liste])
+
+    st.dataframe(tabelle, use_container_width=True, hide_index=True)
+    st.caption("Bei gleicher Anzahl teilen sich die Beteiligten den Platz.")
+
+    st.divider()
+
+    # ===== VERTEILUNGEN =====
+    col_d1, col_d2 = st.columns(2)
+
+    with col_d1:
+        st.markdown("### 📅 Dienste pro Monat")
+        monate = stats.pro_monat(gefiltert)
+        if monate:
+            df_monat = pd.DataFrame(
+                {'Monat': list(monate), 'Dienste': list(monate.values())})
+            fig = px.line(df_monat, x='Monat', y='Dienste', markers=True)
+            fig.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=300)
+            st.plotly_chart(fig, use_container_width=True)
+
+    with col_d2:
+        st.markdown("### 🗓️ Nach Wochentag")
+        tage = stats.pro_wochentag(gefiltert)
+        if tage:
+            df_tage = pd.DataFrame(
+                {'Wochentag': list(tage), 'Dienste': list(tage.values())})
+            fig_t = px.bar(df_tage, x='Wochentag', y='Dienste')
+            fig_t.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=300)
+            st.plotly_chart(fig_t, use_container_width=True)
+
+    # ===== GESAMTZAHLEN =====
+    st.divider()
+    st.markdown("### 📈 Insgesamt")
+    col_g1, col_g2, col_g3 = st.columns(3)
+    with col_g1:
+        st.metric("Dienste", kennzahlen['dienste'])
+    with col_g2:
+        st.metric("Stunden", f"{kennzahlen['stunden']:g}")
+    with col_g3:
+        st.metric("Aktive", kennzahlen['personen'])
+
+    if user.get('role') == 'admin' and liste:
+        with st.expander("📥 Rangliste exportieren"):
+            st.download_button(
+                "Als CSV herunterladen",
+                pd.DataFrame([{
+                    'Platz': e['platz'], 'Name': e['name'],
+                    'E-Mail': e['email'], 'Dienste': e['dienste'],
+                    'Stunden': e['stunden'],
+                } for e in liste]).to_csv(index=False).encode('utf-8-sig'),
+                file_name=f"rangliste_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv")
+
+
 # ===== VERWALTUNG (ADMIN) =====
 # ===== VERWALTUNG (ADMIN) - ERWEITERT MIT FREIEN SLOTS =====
 # ===== VERWALTUNG (ADMIN) - KOMPLETT MIT ADMIN-BUCHUNG =====

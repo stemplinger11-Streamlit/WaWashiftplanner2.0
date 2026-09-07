@@ -206,6 +206,7 @@ Wachdienst. Das Datenmodell (eine Buchung je Termin) bleibt damit richtig.
 - Nutzer-Import aus CSV
 - Datenschutzseite (Entwurf, siehe unten)
 - Doppelbuchung: Prüfen und Schreiben in einer Transaktion
+- Statistik: Rangliste mit eigenem Platz, Saison- und Wochentagsfilter
 
 ### Gestrichen
 Mehrere Personen je Termin · Qualifikationen · Anwesenheitsbestätigung

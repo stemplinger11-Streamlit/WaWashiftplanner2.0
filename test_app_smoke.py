@@ -257,3 +257,23 @@ def test_router_kennt_datenschutz():
         encoding='utf-8')
     assert "elif page == 'datenschutz':" in quelle
     assert "('datenschutz', " in quelle
+
+
+# ===== STATISTIK =====
+
+def test_statistikmodul_eingebunden(app):
+    for name in ['rangliste', 'eintrag_von', 'abstand_nach_oben',
+                 'saisons_in_daten', 'im_zeitraum', 'kennzahlen']:
+        assert callable(getattr(app.stats, name, None)), f"{name} fehlt"
+
+
+def test_rangliste_ueber_die_app(app):
+    """Verhalten, nicht nur Existenz."""
+    daten = [{'user_email': 'a@x.de', 'user_name': 'Anna',
+              'slot_date': '2026-10-01', 'slot_time': '17:00 - 20:00'}] * 2
+    daten.append({'user_email': 'b@x.de', 'user_name': 'Bert',
+                  'slot_date': '2026-10-02', 'slot_time': '17:00 - 20:00'})
+    liste = app.stats.rangliste(daten)
+    assert liste[0]['name'] == 'Anna'
+    assert liste[0]['platz'] == 1
+    assert liste[0]['medaille'] == '🥇'

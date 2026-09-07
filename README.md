@@ -19,6 +19,7 @@ auf gemeinsamer Datenbasis.
 | `core_theme.py` / `core_styles.py` | Farbpalette und Stylesheet |
 | `core_ics.py` | Kalenderdatei (.ics) aus Buchungen |
 | `core_import.py` | Nutzerliste aus CSV einlesen |
+| `core_stats.py` | Rangliste, Saisonfilter, Verteilungen |
 | `core_reminders.py` | Auswahl der fälligen Erinnerungen |
 | `test_core_*.py` | Tests der fachlichen Regeln (ohne Firebase/Streamlit) |
 | `scripts/` | Sicherung und Wiederherstellung der Datenbank |
