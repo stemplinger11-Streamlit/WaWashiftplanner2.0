@@ -1325,7 +1325,8 @@ def login_page():
                 "Angemeldet bleiben", value=True,
                 help="Auf diesem Gerät angemeldet bleiben. Auf gemeinsam "
                      "genutzten Geräten bitte abwählen.")
-            submit = st.form_submit_button("Anmelden", use_container_width=True)
+            submit = st.form_submit_button("Anmelden", use_container_width=True,
+                                           type="primary")
             
             if submit:
                 if email and password:
@@ -1367,7 +1368,9 @@ def login_page():
             email_notif = st.checkbox("E-Mail Benachrichtigungen", value=True)
             sms_notif = st.checkbox("SMS Benachrichtigungen", value=False)
             
-            reg_submit = st.form_submit_button("Registrieren", use_container_width=True)
+            reg_submit = st.form_submit_button("Registrieren",
+                                               use_container_width=True,
+                                               type="primary")
             
             if reg_submit:
                 if not reg_name or not reg_email or not reg_pw:
