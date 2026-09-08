@@ -398,6 +398,54 @@ select:focus-visible, a:focus-visible, [role="tab"]:focus-visible {{
     background-color: {bg_secondary} !important;
     border: {border_thin} solid {border_color} !important;
     border-radius: {radius_md} !important;
+    overflow: hidden;
+}}
+
+/* st.table liefert eine schlichte HTML-Tabelle - die gestalten wir selbst.
+   Waagerechte Linien genuegen; senkrechte Gitterlinien zerhacken die Zeile,
+   ohne etwas zu trennen, was das Auge nicht ohnehin sieht. */
+[data-testid="stTable"] table {{
+    border-collapse: collapse !important;
+    width: 100% !important;
+    font-size: {text_sm} !important;
+}}
+
+[data-testid="stTable"] thead th {{
+    background-color: {bg_surface} !important;
+    color: {text_muted} !important;
+    font-size: {text_xs} !important;
+    font-weight: {weight_semi} !important;
+    letter-spacing: {tracking_wide} !important;
+    text-transform: uppercase;
+    text-align: left !important;
+    padding: {space_2} {space_3} !important;
+    border: none !important;
+    border-bottom: {border_thin} solid {border_color} !important;
+}}
+
+[data-testid="stTable"] tbody th,
+[data-testid="stTable"] tbody td {{
+    color: {text_primary} !important;
+    padding: {space_2} {space_3} !important;
+    border: none !important;
+    border-bottom: {border_thin} solid {border_color} !important;
+    background: transparent !important;
+}}
+
+[data-testid="stTable"] tbody tr:last-child th,
+[data-testid="stTable"] tbody tr:last-child td {{
+    border-bottom: none !important;
+}}
+
+[data-testid="stTable"] tbody tr:hover td,
+[data-testid="stTable"] tbody tr:hover th {{
+    background-color: {bg_surface} !important;
+}}
+
+/* Zahlenspalten rechtsbuendig, damit Groessen vergleichbar sind */
+[data-testid="stTable"] tbody td:nth-last-child(-n+2),
+[data-testid="stTable"] thead th:nth-last-child(-n+2) {{
+    text-align: right !important;
 }}
 
 /* ===== MELDUNGEN ===== */

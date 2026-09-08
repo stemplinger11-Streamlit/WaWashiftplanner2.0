@@ -329,6 +329,37 @@ def wants_sms(user, event):
     return bool(user.get('phone')) and notify_pref(user, 'sms', event)
 
 # ===== CSS INJECTION (PROFESSIONELLES DESIGN) =====
+def aktuelle_farben():
+    """Palette des gerade aktiven Modus."""
+    return theme.palette(st.session_state.get('dark_mode', True))
+
+
+def diagramm_stil(fig):
+    """Faerbt ein Plotly-Diagramm nach unserer Palette.
+
+    Noetig, weil Plotly sonst Streamlits eigenem Theme folgt. Das steht in
+    config.toml fest auf dunkel, waehrend die App zwischen hell und dunkel
+    umschaltbar ist - im Light Mode standen sonst schwarze Diagramme auf
+    heller Seite. Beim Zeichnen zusaetzlich theme=None uebergeben, sonst
+    legt Streamlit sein Theme obendrauf.
+    """
+    f = aktuelle_farben()
+    fig.update_layout(
+        paper_bgcolor=f['bg_secondary'],
+        plot_bgcolor=f['bg_secondary'],
+        font=dict(color=f['text_secondary'], size=12),
+        margin=dict(l=0, r=0, t=10, b=0),
+        height=300,
+        showlegend=False,
+        hoverlabel=dict(bgcolor=f['bg_elevated'], font_color=f['text_primary']),
+    )
+    fig.update_xaxes(gridcolor=f['border_color'], linecolor=f['border_color'],
+                     zerolinecolor=f['border_color'], title_font_size=12)
+    fig.update_yaxes(gridcolor=f['border_color'], linecolor=f['border_color'],
+                     zerolinecolor=f['border_color'], title_font_size=12)
+    return fig
+
+
 def inject_css(dark=False):
     """Faerbt die App nach den geprueften Gestaltungstoken.
 
@@ -1780,8 +1811,7 @@ def kalender_page():
             with col_u3:
                 st.metric("🔎 Vertretung gesucht", gesucht_anzahl)
 
-            st.dataframe(pd.DataFrame(uebersicht), use_container_width=True,
-                         hide_index=True)
+            st.table(pd.DataFrame(uebersicht).set_index('Datum'))
             st.caption("💡 Gebucht wird weiterhin oben in der Wochenansicht.")
         else:
             st.info("Keine Termine in den nächsten 8 Wochen.")
@@ -2284,15 +2314,19 @@ def statistik_page():
     # ===== RANGLISTE =====
     st.markdown("### 🏆 Rangliste")
 
+    # Die eigene Zeile wird im Namen markiert, nicht in einer eigenen Spalte -
+    # eine Spalte ohne Ueberschrift wirkt in einer Tabelle unfertig.
     tabelle = pd.DataFrame([{
-        '': ('👉' if e['email'] == eigene_email else ''),
         'Platz': f"{e['medaille']} {e['platz']}".strip(),
-        'Name': e['name'],
+        'Name': (f"👉 {e['name']}" if e['email'] == eigene_email else e['name']),
         'Dienste': e['dienste'],
-        'Stunden': e['stunden'],
+        'Stunden': f"{e['stunden']:g}",
     } for e in liste])
 
-    st.dataframe(tabelle, use_container_width=True, hide_index=True)
+    # st.table statt st.dataframe: Das Datengitter wird von einer
+    # JS-Komponente gezeichnet, die Streamlits Theme liest und im Light Mode
+    # dunkel blieb. st.table ist schlichtes HTML und folgt unserem CSS.
+    st.table(tabelle.set_index('Platz'))
     st.caption("Bei gleicher Anzahl teilen sich die Beteiligten den Platz.")
 
     st.divider()
@@ -2306,9 +2340,14 @@ def statistik_page():
         if monate:
             df_monat = pd.DataFrame(
                 {'Monat': list(monate), 'Dienste': list(monate.values())})
-            fig = px.line(df_monat, x='Monat', y='Dienste', markers=True)
-            fig.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=300)
-            st.plotly_chart(fig, use_container_width=True)
+            # Balken mit Kategorieachse statt Linie: Bei einem einzigen
+            # Monat skalierte Plotly die Zeitachse bis in Mikrosekunden und
+            # beschriftete sie mit "23:59:59.999".
+            fig = px.bar(df_monat, x='Monat', y='Dienste')
+            fig.update_traces(marker_color=aktuelle_farben()['accent_blue'])
+            fig.update_xaxes(type='category')
+            st.plotly_chart(diagramm_stil(fig), use_container_width=True,
+                            theme=None)
 
     with col_d2:
         st.markdown("### 🗓️ Nach Wochentag")
@@ -2317,8 +2356,10 @@ def statistik_page():
             df_tage = pd.DataFrame(
                 {'Wochentag': list(tage), 'Dienste': list(tage.values())})
             fig_t = px.bar(df_tage, x='Wochentag', y='Dienste')
-            fig_t.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=300)
-            st.plotly_chart(fig_t, use_container_width=True)
+            fig_t.update_traces(marker_color=aktuelle_farben()['accent_blue'])
+            fig_t.update_xaxes(type='category')
+            st.plotly_chart(diagramm_stil(fig_t), use_container_width=True,
+                            theme=None)
 
     # ===== GESAMTZAHLEN =====
     st.divider()

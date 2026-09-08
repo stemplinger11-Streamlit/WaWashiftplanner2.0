@@ -311,3 +311,29 @@ def test_keine_fest_verdrahteten_farben_in_der_app():
     assert not treffer, (
         f"Feste Farbwerte in streamlit_app.py: {sorted(set(treffer))} - "
         f"gehoeren nach core_theme")
+
+
+def test_diagramme_folgen_der_palette(app):
+    """Plotly folgt sonst Streamlits Theme aus config.toml.
+
+    Das steht fest auf dunkel, waehrend die App umschaltbar ist - im Light
+    Mode standen schwarze Diagramme auf heller Seite. Im Browser gesehen.
+    """
+    import plotly.express as px
+
+    fig = app.diagramm_stil(px.bar(x=['a', 'b'], y=[1, 2]))
+    farben = app.aktuelle_farben()
+    assert fig.layout.paper_bgcolor == farben['bg_secondary']
+    assert fig.layout.plot_bgcolor == farben['bg_secondary']
+    assert fig.layout.font.color == farben['text_secondary']
+
+
+def test_diagramme_werden_ohne_streamlit_theme_gezeichnet():
+    """theme=None ist noetig, sonst legt Streamlit sein Theme obendrauf."""
+    import pathlib
+    import re
+
+    quelle = (pathlib.Path(__file__).parent / 'streamlit_app.py').read_text(
+        encoding='utf-8')
+    for aufruf in re.findall(r'st\.plotly_chart\((?:[^()]|\([^()]*\))*\)', quelle):
+        assert 'theme=None' in aufruf, f"ohne theme=None: {aufruf[:70]}"
