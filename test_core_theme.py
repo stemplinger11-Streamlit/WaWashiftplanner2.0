@@ -319,3 +319,23 @@ def test_sekundaerform_schliesst_hauptaktionen_aus():
                 raise AssertionError(
                     f"'{selektor}' ohne :not([kind*=\"primary\"]) - "
                     f"ueberschreibt die Hauptaktion")
+
+
+def test_symbolschrift_bleibt_erhalten():
+    """Icons sind Ligaturen - mit der Textschrift wird ein Wort daraus.
+
+    Die Pauschalregel '.stApp *' setzt die Oberflaechenschrift auf alles.
+    Ohne die Ausnahme darunter stand im Passwortfeld "visibility" statt
+    des Augensymbols. Im Browser gefunden.
+    """
+    import core_styles
+
+    v = core_styles.CSS_VORLAGE
+    assert '[data-testid="stIconMaterial"]' in v, "Ausnahme fuer Icons fehlt"
+    assert 'Material Symbols Rounded' in v, "Symbolschrift nicht gesetzt"
+
+    # Die Ausnahme muss NACH der Pauschalregel stehen, sonst verliert sie
+    pauschal = v.index('.stApp * {')
+    ausnahme = v.index('[data-testid="stIconMaterial"]')
+    assert ausnahme > pauschal, (
+        "Die Icon-Ausnahme steht vor der Pauschalregel und wird ueberschrieben")

@@ -31,6 +31,21 @@ html, body, .stApp, .stApp * {{
     font-family: {font_ui} !important;
 }}
 
+/* Symbolschriften muessen von der Regel darueber ausgenommen bleiben.
+   Streamlit setzt Icons als Ligaturen: Das Element enthaelt den Text
+   "visibility", und erst die Symbolschrift macht daraus ein Auge. Mit der
+   Textschrift stand das Wort im Passwortfeld. */
+[data-testid="stIconMaterial"],
+.material-icons, .material-icons-outlined,
+span[class*="material-symbols"] {{
+    font-family: "Material Symbols Rounded", "Material Icons" !important;
+}}
+
+/* Code und Kennzahlen in der Festbreitenschrift */
+.stApp code, .stApp pre, .stApp kbd, [data-testid="stCode"] * {{
+    font-family: {font_mono} !important;
+}}
+
 .stApp {{
     font-size: {text_base};
     line-height: {leading_base};
