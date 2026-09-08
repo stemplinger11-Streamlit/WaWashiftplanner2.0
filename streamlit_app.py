@@ -350,7 +350,7 @@ def inject_css(dark=False):
     Regeln: core_styles.py
     """
     st.markdown(
-        "<style>" + styles.build_css(theme.palette(dark)) + "</style>",
+        "<style>" + styles.build_css(theme.tokens(dark)) + "</style>",
         unsafe_allow_html=True
     )
 

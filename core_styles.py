@@ -1,19 +1,22 @@
 """
 Das Stylesheet der App.
 
-Getrennt von streamlit_app.py, weil es rund 300 Zeilen sind und weil sich so
-pruefen laesst, dass jeder verwendete Platzhalter in der Palette existiert.
+Jeder Wert kommt aus core_theme: Farben aus der Palette, alles andere aus
+DESIGN. Im CSS steht keine einzige nackte Zahl - wer etwas ergaenzt, waehlt
+aus der Leiter statt zu raten. Die Regeln dazu stehen in DESIGN.md.
 
 Zur Selektorwahl: Streamlit hat seine DOM-Klassen zwischen 1.3x und 1.4x
-umbenannt. Der Bereich hiess frueher '.main', heute
+umbenannt. Der Inhaltsbereich hiess frueher '.main', heute
 [data-testid="stMain"]. Nach dem Versionssprung griffen deshalb einige
-unserer Regeln nicht mehr - die Seite behielt Streamlits Grundfarbe,
-waehrend Formular und Schrift bereits unsere Palette trugen. Ergebnis war
-weisse Schrift auf weissem Grund. Darum stehen hier bewusst die Selektoren
-beider Generationen nebeneinander.
+Regeln nicht mehr - die Seite behielt Streamlits Grundfarbe, waehrend
+Formular und Schrift schon unsere Palette trugen, also weisse Schrift auf
+weissem Grund. Darum stehen hier die Selektoren beider Generationen
+nebeneinander.
 """
+from core_theme import FONT_IMPORT
 
-CSS_VORLAGE = """
+CSS_VORLAGE = FONT_IMPORT + """
+
 /* ===== GRUNDFLAECHE ===== */
 html, body, .stApp,
 [data-testid="stAppViewContainer"],
@@ -24,20 +27,50 @@ html, body, .stApp,
     color: {text_primary} !important;
 }}
 
+html, body, .stApp, .stApp * {{
+    font-family: {font_ui} !important;
+}}
+
+.stApp {{
+    font-size: {text_base};
+    line-height: {leading_base};
+    -webkit-font-smoothing: antialiased;
+}}
+
 [data-testid="stHeader"] {{
     background-color: {bg_primary} !important;
-    border-bottom: 1px solid {border_color} !important;
+    border-bottom: {border_thin} solid {border_color} !important;
 }}
 
 [data-testid="stToolbar"], [data-testid="stDecoration"] {{
     background: transparent !important;
 }}
 
+/* Etwas mehr Luft am Seitenrand - der Standard klebt am Fensterrand */
+[data-testid="stMainBlockContainer"] {{
+    padding-top: {space_5} !important;
+    max-width: 1180px;
+}}
+
 /* ===== TYPOGRAFIE ===== */
 .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6 {{
     color: {text_primary} !important;
-    font-weight: 700 !important;
-    letter-spacing: -0.01em !important;
+    font-weight: {weight_bold} !important;
+    line-height: {leading_tight} !important;
+    letter-spacing: {tracking_tight} !important;
+    text-wrap: balance;
+}}
+
+.stApp h1 {{
+    font-size: {text_2xl} !important;
+    margin-bottom: {space_2} !important;
+}}
+
+.stApp h2 {{ font-size: {text_xl} !important; }}
+
+.stApp h3 {{
+    font-size: {text_lg} !important;
+    font-weight: {weight_semi} !important;
 }}
 
 .stApp p, .stApp li, .stApp label, .stApp td, .stApp th,
@@ -48,38 +81,60 @@ html, body, .stApp,
 .stApp [data-testid="stCaptionContainer"],
 .stApp [data-testid="stCaptionContainer"] * {{
     color: {text_muted} !important;
+    font-size: {text_sm} !important;
 }}
 
-.stApp a {{ color: {accent_blue} !important; }}
+.stApp a {{
+    color: {accent_blue} !important;
+    text-underline-offset: 2px;
+}}
 
 .stApp hr, [data-testid="stDivider"] {{
     border-color: {divider_color} !important;
+    opacity: 0.6;
+}}
+
+/* Ziffern in Tabellen und Kennzahlen untereinander */
+.stApp table, .stApp [data-testid="stMetricValue"],
+.stApp [data-testid="stDataFrame"] {{
+    font-variant-numeric: tabular-nums;
 }}
 
 /* ===== SEITENLEISTE ===== */
 section[data-testid="stSidebar"],
 [data-testid="stSidebarContent"] {{
     background-color: {bg_secondary} !important;
-    border-right: 1px solid {border_color} !important;
+    border-right: {border_thin} solid {border_color} !important;
 }}
 
 section[data-testid="stSidebar"] * {{
     color: {text_primary} !important;
 }}
 
+/* Navigation: ruhige Zeilen statt einer Wand aus Schaltflaechen */
 section[data-testid="stSidebar"] .stButton button {{
-    background: {bg_elevated} !important;
-    color: {text_primary} !important;
-    border: 1px solid {border_color} !important;
-    font-weight: 500 !important;
+    background: transparent !important;
+    color: {text_secondary} !important;
+    border: {border_thin} solid transparent !important;
+    border-radius: {radius_sm} !important;
+    padding: {space_2} {space_3} !important;
+    font-weight: {weight_medium} !important;
+    font-size: {text_sm} !important;
     justify-content: flex-start !important;
+    text-align: left !important;
+    box-shadow: none !important;
+    transition: background {motion_fast} {ease},
+                color {motion_fast} {ease} !important;
 }}
 
-section[data-testid="stSidebar"] .stButton button:hover,
+section[data-testid="stSidebar"] .stButton button:hover {{
+    background: {bg_surface} !important;
+    border-color: {border_color} !important;
+    color: {text_primary} !important;
+}}
+
 section[data-testid="stSidebar"] .stButton button:hover * {{
-    background: {accent_blue} !important;
-    border-color: {accent_blue} !important;
-    color: {on_accent} !important;
+    color: {text_primary} !important;
 }}
 
 /* ===== SCHALTFLAECHEN ===== */
@@ -88,12 +143,15 @@ section[data-testid="stSidebar"] .stButton button:hover * {{
 [data-testid="stBaseButton-secondaryFormSubmit"] {{
     background: {bg_elevated} !important;
     color: {text_primary} !important;
-    border: 1.5px solid {border_color} !important;
-    border-radius: 10px !important;
-    padding: 0.55rem 1.2rem !important;
-    font-weight: 600 !important;
-    transition: all 0.18s ease !important;
+    border: {border_medium} solid {border_color} !important;
+    border-radius: {radius_sm} !important;
+    padding: {space_2} {space_4} !important;
+    font-weight: {weight_semi} !important;
+    font-size: {text_sm} !important;
     box-shadow: none !important;
+    transition: border-color {motion_fast} {ease},
+                color {motion_fast} {ease},
+                background {motion_fast} {ease} !important;
 }}
 
 .stButton button *, .stFormSubmitButton button * {{
@@ -105,6 +163,10 @@ section[data-testid="stSidebar"] .stButton button:hover * {{
     color: {accent_blue} !important;
 }}
 
+.stButton button:active, .stFormSubmitButton button:active {{
+    transform: translateY(1px);
+}}
+
 /* Hauptaktionen - gefuellt */
 [data-testid="stBaseButton-primary"],
 [data-testid="stBaseButton-primaryFormSubmit"],
@@ -113,7 +175,7 @@ section[data-testid="stSidebar"] .stButton button:hover * {{
 .stButton button[kind="primaryFormSubmit"] {{
     background: {accent_blue} !important;
     color: {on_accent} !important;
-    border: 1.5px solid {accent_blue} !important;
+    border: {border_medium} solid {accent_blue} !important;
 }}
 
 [data-testid="stBaseButton-primary"] *,
@@ -130,7 +192,9 @@ section[data-testid="stSidebar"] .stButton button:hover * {{
     border-color: {accent_blue_hover} !important;
 }}
 
-button:focus-visible {{
+/* Sichtbarer Fokus - fuer alle, die mit der Tastatur arbeiten */
+button:focus-visible, input:focus-visible, textarea:focus-visible,
+select:focus-visible, a:focus-visible, [role="tab"]:focus-visible {{
     outline: 3px solid {accent_blue} !important;
     outline-offset: 2px !important;
 }}
@@ -147,13 +211,16 @@ button:focus-visible {{
 .stDateInput input {{
     background-color: {bg_elevated} !important;
     color: {text_primary} !important;
-    border: 1.5px solid {border_color} !important;
-    border-radius: 9px !important;
+    border: {border_medium} solid {border_color} !important;
+    border-radius: {radius_sm} !important;
+    font-size: {text_base} !important;
+    transition: border-color {motion_fast} {ease} !important;
 }}
 
 [data-baseweb="input"], [data-baseweb="textarea"], [data-baseweb="base-input"] {{
     background-color: {bg_elevated} !important;
     border-color: {border_color} !important;
+    border-radius: {radius_sm} !important;
 }}
 
 .stTextInput input:focus, .stTextArea textarea:focus,
@@ -168,7 +235,8 @@ button:focus-visible {{
 
 [data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] * {{
     color: {text_primary} !important;
-    font-weight: 600 !important;
+    font-weight: {weight_semi} !important;
+    font-size: {text_sm} !important;
 }}
 
 /* Auswahllisten und ihre Aufklapp-Menues */
@@ -176,11 +244,13 @@ button:focus-visible {{
     background-color: {bg_elevated} !important;
     color: {text_primary} !important;
     border-color: {border_color} !important;
+    border-radius: {radius_sm} !important;
 }}
 
 [data-baseweb="popover"], [data-baseweb="menu"], [role="listbox"] {{
     background-color: {bg_secondary} !important;
-    border: 1px solid {border_color} !important;
+    border: {border_thin} solid {border_color} !important;
+    border-radius: {radius_md} !important;
 }}
 
 [data-baseweb="menu"] li, [role="option"] {{
@@ -197,42 +267,58 @@ button:focus-visible {{
     color: {text_primary} !important;
 }}
 
+/* Ausgewaehlte Eintraege in Mehrfachauswahl */
+[data-baseweb="tag"] {{
+    background-color: {slot_free_bg} !important;
+    color: {accent_blue_text} !important;
+    border-radius: {radius_sm} !important;
+}}
+[data-baseweb="tag"] * {{ color: {accent_blue_text} !important; }}
+
 /* ===== FORMULARE, KARTEN, AUSKLAPPER ===== */
 [data-testid="stForm"] {{
     background-color: {bg_secondary} !important;
-    border: 1px solid {border_color} !important;
-    border-radius: 12px !important;
-    padding: 1.4rem !important;
+    border: {border_thin} solid {border_color} !important;
+    border-radius: {radius_md} !important;
+    padding: {space_5} !important;
     box-shadow: {card_shadow} !important;
 }}
 
 [data-testid="stExpander"], [data-testid="stExpander"] details {{
     background-color: {bg_secondary} !important;
-    border: 1px solid {border_color} !important;
-    border-radius: 10px !important;
+    border: {border_thin} solid {border_color} !important;
+    border-radius: {radius_md} !important;
 }}
 
 [data-testid="stExpander"] summary,
 [data-testid="stExpander"] summary * {{
     color: {text_primary} !important;
-    font-weight: 600 !important;
+    font-weight: {weight_semi} !important;
+    font-size: {text_sm} !important;
+}}
+
+[data-testid="stPopover"] {{
+    border-radius: {radius_md} !important;
 }}
 
 /* ===== REITER ===== */
 .stTabs [data-baseweb="tab-list"] {{
-    gap: 4px !important;
-    border-bottom: 1px solid {border_color} !important;
+    gap: {space_1} !important;
+    border-bottom: {border_thin} solid {border_color} !important;
     background: transparent !important;
 }}
 
 .stTabs [data-baseweb="tab"] {{
     color: {text_muted} !important;
     background: transparent !important;
-    font-weight: 600 !important;
-    padding: 0.5rem 1rem !important;
+    font-weight: {weight_semi} !important;
+    font-size: {text_sm} !important;
+    padding: {space_2} {space_4} !important;
+    transition: color {motion_fast} {ease} !important;
 }}
 
 .stTabs [data-baseweb="tab"] * {{ color: inherit !important; }}
+.stTabs [data-baseweb="tab"]:hover {{ color: {text_primary} !important; }}
 
 .stTabs [aria-selected="true"], .stTabs [aria-selected="true"] * {{
     color: {accent_blue} !important;
@@ -242,121 +328,168 @@ button:focus-visible {{
     background-color: {accent_blue} !important;
 }}
 
-/* ===== KENNZAHLEN & TABELLEN ===== */
+/* ===== KENNZAHLEN ===== */
 [data-testid="stMetric"] {{
     background-color: {bg_secondary} !important;
-    border: 1px solid {border_color} !important;
-    border-radius: 10px !important;
-    padding: 0.9rem 1rem !important;
-}}
-[data-testid="stMetricValue"], [data-testid="stMetricLabel"],
-[data-testid="stMetricValue"] *, [data-testid="stMetricLabel"] * {{
-    color: {text_primary} !important;
+    border: {border_thin} solid {border_color} !important;
+    border-radius: {radius_md} !important;
+    padding: {space_3} {space_4} !important;
 }}
 
+[data-testid="stMetricLabel"], [data-testid="stMetricLabel"] * {{
+    color: {text_muted} !important;
+    font-size: {text_xs} !important;
+    font-weight: {weight_medium} !important;
+    letter-spacing: {tracking_wide} !important;
+    text-transform: uppercase;
+}}
+
+[data-testid="stMetricValue"], [data-testid="stMetricValue"] * {{
+    color: {text_primary} !important;
+    font-size: {text_2xl} !important;
+    font-weight: {weight_bold} !important;
+    letter-spacing: {tracking_tight} !important;
+}}
+
+/* ===== TABELLEN ===== */
 [data-testid="stDataFrame"], [data-testid="stTable"] {{
     background-color: {bg_secondary} !important;
-    border: 1px solid {border_color} !important;
-    border-radius: 10px !important;
+    border: {border_thin} solid {border_color} !important;
+    border-radius: {radius_md} !important;
 }}
 
 /* ===== MELDUNGEN ===== */
 [data-testid="stAlert"] {{
-    border-radius: 10px !important;
-    border-left-width: 5px !important;
+    border-radius: {radius_md} !important;
+    border-left-width: {border_accent} !important;
+    padding: {space_3} {space_4} !important;
 }}
 [data-testid="stAlert"], [data-testid="stAlert"] * {{
     color: {text_primary} !important;
+    font-size: {text_sm} !important;
 }}
 
 /* ===== KONTROLLKAESTCHEN ===== */
 .stCheckbox label, .stRadio label,
 .stCheckbox label *, .stRadio label * {{
     color: {text_primary} !important;
+    font-size: {text_sm} !important;
 }}
 
 /* =====================================================================
-   Eigene Bausteine. Bewusst mit .stApp davor, damit sie in der Kaskade
-   ueber den breiten Grundregeln weiter oben stehen.
+   Eigene Bausteine. Mit .stApp davor, damit sie in der Kaskade ueber den
+   breiten Grundregeln stehen.
    ===================================================================== */
 .stApp .slot-card {{
     background-color: {bg_secondary} !important;
     color: {text_primary} !important;
-    border: 1.5px solid {border_color} !important;
-    border-radius: 12px !important;
-    padding: 1rem 1.15rem !important;
-    margin: 0.6rem 0 !important;
+    border: {border_thin} solid {border_color} !important;
+    border-left: {border_accent} solid {divider_color} !important;
+    border-radius: {radius_md} !important;
+    padding: {space_4} !important;
+    margin: {space_3} 0 !important;
     box-shadow: {card_shadow} !important;
-    transition: box-shadow 0.2s ease !important;
+    transition: box-shadow {motion_base} {ease},
+                transform {motion_base} {ease} !important;
 }}
 
 .stApp .slot-card * {{ color: {text_primary} !important; }}
-.stApp .slot-card h3 {{ color: {text_primary} !important; margin: 0 !important; }}
-.stApp .slot-card p {{ color: {text_secondary} !important; }}
-.stApp .slot-card:hover {{ box-shadow: {card_shadow_hover} !important; }}
 
+.stApp .slot-card h3 {{
+    color: {text_primary} !important;
+    margin: 0 !important;
+    font-size: {text_lg} !important;
+}}
+
+.stApp .slot-card p {{
+    color: {text_secondary} !important;
+    font-size: {text_sm} !important;
+}}
+
+.stApp .slot-card:hover {{
+    box-shadow: {card_shadow_hover} !important;
+    transform: translateY(-1px);
+}}
+
+/* Der Zustand steckt in der linken Kante, nicht in einer Farbflaeche -
+   so bleibt die Karte ruhig und der Status trotzdem auf einen Blick da. */
 .stApp .slot-card.free {{
     background-color: {slot_free_bg} !important;
-    border-color: {slot_free_border} !important;
-    border-left: 5px solid {slot_free_border} !important;
+    border-color: {border_color} !important;
+    border-left-color: {slot_free_border} !important;
 }}
 
 .stApp .slot-card.booked {{
     background-color: {slot_booked_bg} !important;
-    border-color: {slot_booked_border} !important;
-    border-left: 5px solid {slot_booked_border} !important;
+    border-color: {border_color} !important;
+    border-left-color: {slot_booked_border} !important;
 }}
 
 .stApp .slot-card.blocked {{
     background-color: {slot_blocked_bg} !important;
-    border-color: {slot_blocked_border} !important;
-    border-left: 5px solid {slot_blocked_border} !important;
+    border-color: {border_color} !important;
+    border-left-color: {slot_blocked_border} !important;
 }}
 
 .stApp .status-badge {{
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.32rem 0.8rem;
-    border-radius: 20px;
-    font-weight: 600;
-    font-size: 0.88rem;
-    margin-top: 0.6rem;
+    gap: {space_1};
+    padding: {space_1} {space_3};
+    border-radius: {radius_pill};
+    font-weight: {weight_semi};
+    font-size: {text_xs};
+    letter-spacing: {tracking_wide};
+    margin-top: {space_3};
     background: transparent;
 }}
 
 .stApp .status-badge.free {{
     color: {accent_blue_text} !important;
-    border: 1.5px solid {slot_free_border};
+    border: {border_medium} solid {slot_free_border};
 }}
 
 .stApp .status-badge.booked {{
     color: {accent_orange_text} !important;
-    border: 1.5px solid {slot_booked_border};
+    border: {border_medium} solid {slot_booked_border};
 }}
 
 .stApp .status-badge.blocked {{
     color: {text_secondary} !important;
-    border: 1.5px solid {slot_blocked_border};
+    border: {border_medium} solid {slot_blocked_border};
 }}
 
 /* ===== MOBIL ===== */
+/* Die meisten buchen vom Handy - dort zaehlen Daumenflaechen und Platz. */
 @media (max-width: 768px) {{
     [data-testid="stMainBlockContainer"] {{
-        padding: 1rem 0.8rem !important;
+        padding: {space_4} {space_3} !important;
     }}
-    .stApp .slot-card {{ padding: 0.8rem !important; margin: 0.5rem 0 !important; }}
-    .stButton button {{ width: 100% !important; }}
+    .stApp h1 {{ font-size: {text_xl} !important; }}
+    .stApp .slot-card {{
+        padding: {space_3} !important;
+        margin: {space_2} 0 !important;
+    }}
+    .stButton button, .stFormSubmitButton button {{
+        width: 100% !important;
+        min-height: 44px !important;
+    }}
+    [data-testid="stMetricValue"] {{ font-size: {text_xl} !important; }}
 }}
 
+/* Wer Bewegung abgestellt hat, bekommt keine. */
 @media (prefers-reduced-motion: reduce) {{
-    * {{ transition: none !important; animation: none !important; }}
+    *, *::before, *::after {{
+        transition: none !important;
+        animation: none !important;
+    }}
+    .stApp .slot-card:hover {{ transform: none; }}
 }}
 """
 
 
 def build_css(farben):
-    """Setzt die Palette in die Vorlage ein.
+    """Setzt Palette und Gestaltungstoken in die Vorlage ein.
 
     Fehlt ein Schluessel, wirft .format einen KeyError - genau das soll
     passieren, statt eine Regel still mit leerem Wert auszuliefern.

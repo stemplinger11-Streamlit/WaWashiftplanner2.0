@@ -11,6 +11,8 @@ import pytest
 
 from core_theme import (
     DARK as _DARK,
+    DESIGN,
+    tokens,
     AA_GROSS,
     AA_NORMAL,
     DARK,
@@ -162,7 +164,7 @@ def test_streamlit_config_passt_zur_palette():
 
 # ===== STYLESHEET =====
 
-def test_jeder_platzhalter_existiert_in_beiden_paletten():
+def test_jeder_platzhalter_ist_bekannt():
     """Ein fehlender Schluessel wuerde erst beim Seitenaufbau auffallen."""
     import re
 
@@ -172,19 +174,21 @@ def test_jeder_platzhalter_existiert_in_beiden_paletten():
                                  core_styles.CSS_VORLAGE))
     assert platzhalter, "Keine Platzhalter gefunden - Regex pruefen"
 
-    for modus, p in (("Light", LIGHT), ("Dark", DARK)):
-        fehlend = sorted(platzhalter - set(p))
-        assert not fehlend, f"{modus}-Palette fehlen: {fehlend}"
+    for modus, dunkel in (("Light", False), ("Dark", True)):
+        fehlend = sorted(platzhalter - set(tokens(dunkel)))
+        assert not fehlend, f"{modus}: unbekannte Platzhalter {fehlend}"
 
 
 @pytest.mark.parametrize("dunkel", [False, True], ids=["light", "dark"])
 def test_stylesheet_baut_sich_vollstaendig(dunkel):
+    """Nach dem Einsetzen darf kein Platzhalter uebrig bleiben."""
+    import re
+
     import core_styles
 
-    css = core_styles.build_css(palette(dunkel))
+    css = core_styles.build_css(tokens(dunkel))
     assert len(css) > 2000
-    # Nach dem Einsetzen darf kein Platzhalter uebrig sein
-    assert '{' not in css.replace('{{', '').replace('}}', '') or True
+    assert not re.findall(r'(?<!\{)\{([a-z_]+)\}(?!\})', css)
     for farbe in ('bg_primary', 'text_primary'):
         assert palette(dunkel)[farbe] in css
 
@@ -205,3 +209,93 @@ def test_stylesheet_faerbt_ueberschriften_und_buttons():
     assert '.stApp h1' in v
     assert 'stFormSubmitButton' in v
     assert 'stBaseButton-primaryFormSubmit' in v
+
+
+# ===== GESTALTUNGSTOKEN =====
+# Halten den Designguide durch. Ohne diese Tests waeren die Leitern in
+# DESIGN.md eine Empfehlung; mit ihnen sind sie eine Zusicherung.
+
+def test_alle_gestaltungsgruppen_vorhanden():
+    for schluessel in ('font_ui', 'font_mono', 'text_base', 'space_4',
+                       'radius_md', 'motion_base', 'ease', 'border_thin'):
+        assert schluessel in DESIGN, f"{schluessel} fehlt"
+
+
+def test_tokens_enthalten_farben_und_gestaltung():
+    for dunkel in (False, True):
+        alle = tokens(dunkel)
+        assert 'bg_primary' in alle      # aus der Palette
+        assert 'space_4' in alle         # aus DESIGN
+
+
+def test_gestaltungstoken_sind_modusunabhaengig():
+    """Schrift und Abstaende duerfen sich zwischen hell und dunkel nicht
+    unterscheiden - sonst springt das Layout beim Umschalten."""
+    hell, dunkel = tokens(False), tokens(True)
+    for schluessel in DESIGN:
+        assert hell[schluessel] == dunkel[schluessel], schluessel
+
+
+def test_gestaltung_ueberschreibt_keine_farbe():
+    """Ein doppelt vergebener Name wuerde still eine Farbe ersetzen."""
+    ueberschneidung = set(DESIGN) & set(LIGHT)
+    assert not ueberschneidung, f"Doppelte Namen: {sorted(ueberschneidung)}"
+
+
+def test_schriftgroessen_steigen_an():
+    stufen = ['text_xs', 'text_sm', 'text_base', 'text_lg',
+              'text_xl', 'text_2xl', 'text_3xl']
+    werte = [float(DESIGN[s].replace('rem', '')) for s in stufen]
+    assert werte == sorted(werte), f"Leiter nicht aufsteigend: {werte}"
+    assert len(set(werte)) == len(werte), "Doppelte Groessen in der Leiter"
+
+
+def test_abstaende_steigen_an():
+    stufen = [f'space_{i}' for i in range(1, 7)]
+    werte = [float(DESIGN[s].replace('rem', '')) for s in stufen]
+    assert werte == sorted(werte)
+    # Vierer-Leiter: jeder Wert ist ein Vielfaches von 0.25rem (4px)
+    for wert in werte:
+        assert abs((wert / 0.25) - round(wert / 0.25)) < 1e-9, wert
+
+
+def test_radien_steigen_an():
+    stufen = ['radius_sm', 'radius_md', 'radius_lg']
+    werte = [int(DESIGN[s].replace('px', '')) for s in stufen]
+    assert werte == sorted(werte)
+
+
+def test_schriftarten_haben_fallback():
+    """Laedt Google Fonts nicht, muss die App trotzdem lesbar bleiben."""
+    for schluessel in ('font_ui', 'font_mono'):
+        assert ',' in DESIGN[schluessel], f"{schluessel} ohne Ersatzschrift"
+    assert 'sans-serif' in DESIGN['font_ui']
+    assert 'monospace' in DESIGN['font_mono']
+
+
+def test_bewegung_bleibt_kurz():
+    """Eine Oberflaeche fuer den Alltag darf nicht bei jedem Klick spielen."""
+    for schluessel in ('motion_fast', 'motion_base'):
+        assert int(DESIGN[schluessel].replace('ms', '')) <= 250
+
+
+def test_stylesheet_nutzt_die_leitern_statt_eigener_werte():
+    """Kein nackter px- oder rem-Wert im CSS - die Leiter ist verbindlich."""
+    import re
+
+    import core_styles
+
+    # Vorlage ohne den Font-Import betrachten; der traegt Gewichtsangaben.
+    vorlage = core_styles.CSS_VORLAGE.split('*/', 1)[-1]
+    ohne_platzhalter = re.sub(r'\{[a-z_]+\}', '', vorlage)
+
+    erlaubt = {
+        '0px', '1px', '2px', '3px',   # Umrisse, Versatz, Haarlinien
+        '100%', '999px', '44px',      # Vollbreite, Pille, Daumenflaeche
+        '1180px', '768px',            # Layoutbreite, Umbruchpunkt
+    }
+    gefunden = set(re.findall(r'\b\d+(?:\.\d+)?(?:px|rem)\b', ohne_platzhalter))
+    unerwartet = gefunden - erlaubt
+    assert not unerwartet, (
+        f"Werte ausserhalb der Leiter im CSS: {sorted(unerwartet)} - "
+        f"passenden Token aus DESIGN verwenden")

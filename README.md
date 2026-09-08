@@ -16,7 +16,7 @@ auf gemeinsamer Datenbasis.
 | `streamlit_app.py` | Einstiegspunkt: Oberfläche, Datenzugriff, E-Mail/SMS |
 | `core_rules.py` | Feiertage, Saisonpause, Stornofrist, Saisonzeitraum |
 | `core_auth.py` | Passwort-Hashing inkl. Migration der Bestandsnutzer |
-| `core_theme.py` / `core_styles.py` | Farbpalette und Stylesheet |
+| `core_theme.py` / `core_styles.py` | Gestaltungstoken und Stylesheet |
 | `core_ics.py` | Kalenderdatei (.ics) aus Buchungen |
 | `core_import.py` | Nutzerliste aus CSV einlesen |
 | `core_stats.py` | Rangliste, Saisonfilter, Verteilungen |
@@ -25,6 +25,7 @@ auf gemeinsamer Datenbasis.
 | `scripts/` | Sicherung und Wiederherstellung der Datenbank |
 | `TODO.md` | Befunde, offene Punkte, Projektrahmen |
 | `BACKUP.md` | Anleitung zur Datensicherung |
+| `DESIGN.md` | Designguide – verbindlich, durch Tests durchgesetzt |
 
 Die fachlichen Regeln liegen bewusst außerhalb von `streamlit_app.py`, damit
 sie ohne laufende App und ohne Datenbankzugriff geprüft werden können.

@@ -129,6 +129,93 @@ def palette(dark=False):
     return DARK if dark else LIGHT
 
 
+# ===== GESTALTUNGSTOKEN =====
+# Unabhaengig vom Hell/Dunkel-Modus: Schrift, Abstaende, Radien, Bewegung.
+# Bewusst getrennt von der Farbpalette, damit die Kontrastpruefung dort nur
+# Farbwerte vorfindet.
+#
+# Warum ueberhaupt Token statt Werte im CSS: Vorher standen sieben
+# verschiedene Innenabstaende und vier Eckenradien nebeneinander, jeder
+# einzeln entstanden. Wer etwas ergaenzte, riet den passenden Wert. Mit
+# einer festen Leiter gibt es nur noch richtige Werte zur Auswahl.
+DESIGN = {
+    # ----- Schrift -----
+    # IBM Plex Sans: fuer Oberflaechen gezeichnet, sachlich ohne steif zu
+    # wirken, sehr gut lesbar auf kleinen Displays - die meisten buchen vom
+    # Handy. Der Fallback greift, falls Google Fonts nicht laedt.
+    'font_ui': ('"IBM Plex Sans", -apple-system, BlinkMacSystemFont, '
+                '"Segoe UI", Roboto, sans-serif'),
+    # Fuer Zahlen, Kennzahlen und Kurzlabels: gleiche Familie, feste
+    # Zeichenbreite, damit Ziffern in Tabellen untereinander stehen.
+    'font_mono': ('"IBM Plex Mono", ui-monospace, "Cascadia Mono", '
+                  'Consolas, monospace'),
+
+    # Typografische Leiter, Verhaeltnis rund 1.2 (kleine Terz).
+    # Klein genug fuer eine dichte Oberflaeche, gross genug am oberen Ende,
+    # damit Seitentitel Halt geben.
+    'text_xs':   '0.75rem',    # 12px - Kurzlabels, Versaltext
+    'text_sm':   '0.875rem',   # 14px - Hilfstext, Bildunterschriften
+    'text_base': '1rem',       # 16px - Fliesstext
+    'text_lg':   '1.125rem',   # 18px - hervorgehobener Text
+    'text_xl':   '1.375rem',   # 22px - Abschnittsueberschrift
+    'text_2xl':  '1.75rem',    # 28px - Seitentitel
+    'text_3xl':  '2.25rem',    # 36px - Anmeldeseite
+
+    'weight_normal': '400',
+    'weight_medium': '500',
+    'weight_semi':   '600',
+    'weight_bold':   '700',
+
+    'leading_tight': '1.2',    # Ueberschriften
+    'leading_base':  '1.55',   # Fliesstext
+    'tracking_tight': '-0.02em',   # grosse Schrift zieht sich sonst auseinander
+    'tracking_wide':  '0.06em',    # Versalien brauchen Luft
+
+    # ----- Abstaende -----
+    # Vierer-Leiter. Alles im Layout ist ein Vielfaches davon.
+    'space_1': '0.25rem',   # 4px
+    'space_2': '0.5rem',    # 8px
+    'space_3': '0.75rem',   # 12px
+    'space_4': '1rem',      # 16px
+    'space_5': '1.5rem',    # 24px
+    'space_6': '2rem',      # 32px
+
+    # ----- Eckenradien -----
+    # Drei Stufen nach Groesse der Flaeche, nicht nach Geschmack.
+    'radius_sm':   '6px',    # Eingabefelder, kleine Schaltflaechen
+    'radius_md':   '10px',   # Karten, Formulare
+    'radius_lg':   '14px',   # grosse Flaechen
+    'radius_pill': '999px',  # Statusabzeichen
+
+    # ----- Bewegung -----
+    # Kurz und beilaeufig. Eine Oberflaeche, die jemand dreimal pro Woche
+    # benutzt, darf nicht bei jedem Klick eine Vorstellung geben.
+    'motion_fast': '120ms',
+    'motion_base': '200ms',
+    'ease':        'cubic-bezier(0.4, 0, 0.2, 1)',
+
+    # ----- Rahmenstaerken -----
+    'border_thin':   '1px',
+    'border_medium': '1.5px',
+    'border_accent': '4px',   # farbige Kante links an Slot-Karten
+}
+
+# Google-Fonts-Einbindung. Schlaegt sie fehl, greift die Fallback-Kette
+# oben - die App bleibt bedienbar, sieht nur gewoehnlicher aus.
+FONT_IMPORT = (
+    "@import url('https://fonts.googleapis.com/css2?"
+    "family=IBM+Plex+Mono:wght@500&"
+    "family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');"
+)
+
+
+def tokens(dark=False):
+    """Farbpalette und Gestaltungstoken zusammen - alles, was das CSS braucht."""
+    zusammen = dict(palette(dark))
+    zusammen.update(DESIGN)
+    return zusammen
+
+
 # Jede Kombination, die in inject_css() tatsaechlich vorkommt.
 # (Schriftfarbe, Hintergrund, Mindestkontrast, Beschreibung)
 KONTRAST_PAARE = [
