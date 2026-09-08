@@ -142,6 +142,15 @@ section[data-testid="stSidebar"] .stButton button {{
                 color {motion_fast} {ease} !important;
 }}
 
+/* Streamlit legt in die Schaltflaeche einen eigenen Flex-Behaelter mit
+   justify-content: center. Ohne diese Regel bleibt die Beschriftung mittig,
+   obwohl der Button selbst linksbuendig ausgerichtet ist - eine Liste aus
+   zentrierten Eintraegen wirkt versehentlich. */
+section[data-testid="stSidebar"] .stButton button > div {{
+    justify-content: flex-start !important;
+    width: 100% !important;
+}}
+
 section[data-testid="stSidebar"] .stButton button:hover {{
     background: {bg_surface} !important;
     border-color: {border_color} !important;
