@@ -180,10 +180,20 @@ section[data-testid="stSidebar"] .stButton button:hover * {{
 [data-testid="stBaseButton-primaryFormSubmit"],
 .stButton button[kind="primary"],
 .stFormSubmitButton button[kind="primary"],
-.stButton button[kind="primaryFormSubmit"] {{
+.stButton button[kind="primaryFormSubmit"],
+.stFormSubmitButton button[kind="primaryFormSubmit"] {{
     background: {accent_blue} !important;
     color: {on_accent} !important;
     border: {border_medium} solid {accent_blue} !important;
+    /* Form und Groesse muessen hier mitkommen: Seit die Sekundaerform
+       Hauptaktionen ausschliesst, erben sie von dort nichts mehr. */
+    border-radius: {radius_sm} !important;
+    padding: {space_2} {space_4} !important;
+    font-weight: {weight_semi} !important;
+    font-size: {text_sm} !important;
+    box-shadow: none !important;
+    transition: background {motion_fast} {ease},
+                border-color {motion_fast} {ease} !important;
 }}
 
 [data-testid="stBaseButton-primary"] *,
