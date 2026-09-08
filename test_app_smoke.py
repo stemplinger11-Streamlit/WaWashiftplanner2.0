@@ -337,3 +337,56 @@ def test_diagramme_werden_ohne_streamlit_theme_gezeichnet():
         encoding='utf-8')
     for aufruf in re.findall(r'st\.plotly_chart\((?:[^()]|\([^()]*\))*\)', quelle):
         assert 'theme=None' in aufruf, f"ohne theme=None: {aufruf[:70]}"
+
+
+def test_anmelde_cookie_wird_nicht_vor_einem_rerun_geschrieben():
+    """Regression: 'Angemeldet bleiben' setzte nie ein Cookie.
+
+    Die Cookie-Komponente schreibt erst, wenn sie im Browser gerendert
+    wurde. Im Anmeldeformular folgte direkt danach ein st.rerun(), das den
+    Durchlauf abbrach - der Auftrag erreichte den Browser nie. Serverseitig
+    stimmte alles, im Browser fehlte das Cookie. Nur live zu finden.
+
+    Der Schreibvorgang wird jetzt vorgemerkt und in main() ausgefuehrt.
+    """
+    import pathlib
+    import re
+
+    quelle = (pathlib.Path(__file__).parent / 'streamlit_app.py').read_text(
+        encoding='utf-8')
+
+    # Im Anmeldeformular darf nicht direkt geschrieben werden
+    anmelde_block = quelle[quelle.index('def login_page'):
+                           quelle.index('def logout')]
+    assert 'cookie_setzen(' not in anmelde_block, (
+        "login_page schreibt das Cookie direkt - vor dem rerun wirkungslos")
+    assert 'cookie_spaeter_setzen(' in anmelde_block
+
+    # In main() muss der Auftrag abgearbeitet werden
+    main_block = quelle[quelle.index('def main():'):]
+    assert 'ausstehenden_cookie_schreiben()' in main_block
+
+    # Und danach darf in main() kein sofortiges rerun folgen
+    nach_schreiben = main_block[main_block.index('ausstehenden_cookie_schreiben()'):]
+    naechste_zeilen = nach_schreiben.split('\n')[1:6]
+    assert not any(re.match(r'\s*st\.rerun\(\)', z) for z in naechste_zeilen), (
+        "rerun direkt nach dem Schreiben macht es wieder wirkungslos")
+
+
+def test_cookie_auftrag_wird_vorgemerkt_und_abgeraeumt(app, monkeypatch):
+    """Der Auftrag darf nicht liegenbleiben und bei jedem Lauf erneut feuern."""
+    geschrieben = []
+    monkeypatch.setattr(app, 'cookie_setzen',
+                        lambda name, wert, tage: geschrieben.append(name) or True)
+
+    app.st.session_state.clear()
+    app.cookie_spaeter_setzen('token123', 30)
+    assert 'cookie_zu_setzen' in app.st.session_state
+
+    app.ausstehenden_cookie_schreiben()
+    assert geschrieben == [app.SESSION_COOKIE_NAME]
+    assert 'cookie_zu_setzen' not in app.st.session_state
+
+    # Zweiter Durchlauf schreibt nichts mehr
+    app.ausstehenden_cookie_schreiben()
+    assert len(geschrieben) == 1

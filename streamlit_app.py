@@ -264,6 +264,31 @@ def get_remember_days():
         return DEFAULT_REMEMBER_DAYS
 
 
+def cookie_spaeter_setzen(token, tage):
+    """Merkt einen Cookie-Schreibvorgang fuer den naechsten Durchlauf vor.
+
+    Die Cookie-Komponente schreibt erst, wenn sie im Browser gerendert
+    wurde. Ein st.rerun() unmittelbar danach bricht den laufenden Durchlauf
+    ab - der Auftrag erreicht den Browser nie. Genau daran scheiterte
+    "Angemeldet bleiben": Der Cookie wurde nie gesetzt, obwohl serverseitig
+    alles stimmte.
+    """
+    st.session_state['cookie_zu_setzen'] = (token, tage)
+
+
+def ausstehenden_cookie_schreiben():
+    """Schreibt einen vorgemerkten Cookie im laufenden Durchlauf.
+
+    Muss aus main() heraus aufgerufen werden, wo danach kein rerun folgt.
+    """
+    auftrag = st.session_state.pop('cookie_zu_setzen', None)
+    if not auftrag:
+        return
+    token, tage = auftrag
+    if cookie_setzen(SESSION_COOKIE_NAME, token, tage):
+        st.session_state.dauersitzung = True
+
+
 def sitzung_aus_cookie_wiederherstellen():
     """Meldet den Nutzer per Cookie an, falls eines gueltig ist."""
     if st.session_state.get('user') or st.session_state.get('cookie_geprueft'):
@@ -1369,8 +1394,8 @@ def login_page():
                         tage = get_remember_days()
                         if angemeldet_bleiben and tage > 0:
                             token = ww_db.create_session(user['id'], tage=tage)
-                            if token and cookie_setzen(SESSION_COOKIE_NAME, token, tage):
-                                st.session_state.dauersitzung = True
+                            if token:
+                                cookie_spaeter_setzen(token, tage)
 
                         st.success(f"✅ Willkommen, {user['name']}!")
                         st.rerun()
@@ -2205,7 +2230,7 @@ def profil_page():
                         if st.session_state.get('dauersitzung') and tage > 0:
                             neues_token = ww_db.create_session(user['id'], tage=tage)
                             if neues_token:
-                                cookie_setzen(SESSION_COOKIE_NAME, neues_token, tage)
+                                cookie_spaeter_setzen(neues_token, tage)
 
                     if success:
                         # Session aktualisieren
@@ -4459,6 +4484,10 @@ def main():
     if not st.session_state.user:
         login_page()
         return
+
+    # Vorgemerkten Anmelde-Cookie schreiben. Hier, weil danach kein rerun
+    # folgt und die Komponente den Auftrag tatsaechlich ausfuehren kann.
+    ausstehenden_cookie_schreiben()
 
     # Abmeldung nach Inaktivitaet. Die Sitzung liegt nur im Arbeitsspeicher
     # des Browsers - dieser Timeout schuetzt vor allem geteilte Geraete.
