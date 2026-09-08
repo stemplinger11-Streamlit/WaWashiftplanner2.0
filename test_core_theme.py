@@ -339,3 +339,23 @@ def test_symbolschrift_bleibt_erhalten():
     ausnahme = v.index('[data-testid="stIconMaterial"]')
     assert ausnahme > pauschal, (
         "Die Icon-Ausnahme steht vor der Pauschalregel und wird ueberschrieben")
+
+
+def test_bedienelemente_ueber_testid_angesprochen():
+    """data-baseweb ist mit Streamlit 1.6x entfallen.
+
+    Regeln, die nur darauf zielten, liefen ins Leere - Auswahllisten,
+    Datumsfelder und Reiter behielten Streamlits eigene Farbe aus
+    config.toml und blieben im Light Mode dunkel. Im Browser gemessen.
+
+    data-testid ist die stabile Kennzeichnung; die alten Selektoren duerfen
+    als Rueckfall danebenstehen, aber nicht allein.
+    """
+    import core_styles
+
+    v = core_styles.CSS_VORLAGE
+    for testid in ('stSelectbox', 'stDateInputField', 'stTab',
+                   'stTextInputField', 'stNumberInputField', 'portal'):
+        assert f'[data-testid="{testid}"]' in v, (
+            f'{testid} wird nicht angesprochen - verlaesst sich das CSS hier '
+            f'noch auf data-baseweb?')

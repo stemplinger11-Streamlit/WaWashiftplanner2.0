@@ -249,6 +249,8 @@ select:focus-visible, a:focus-visible, [role="tab"]:focus-visible {{
 [data-testid="stDownloadButton"] button * {{ color: {on_accent} !important; }}
 
 /* ===== EINGABEFELDER ===== */
+[data-testid="stTextInputField"], [data-testid="stNumberInputField"],
+[data-testid="stDateInputField"], [data-testid="stTextArea"] textarea,
 .stTextInput input, .stTextArea textarea, .stNumberInput input,
 .stDateInput input {{
     background-color: {bg_elevated} !important;
@@ -281,7 +283,15 @@ select:focus-visible, a:focus-visible, [role="tab"]:focus-visible {{
     font-size: {text_sm} !important;
 }}
 
-/* Auswahllisten und ihre Aufklapp-Menues */
+/* Auswahllisten, Datumsfelder und Aufklapp-Menues.
+   Streamlit hat die data-baseweb-Attribute mit 1.6x entfernt - Regeln, die
+   darauf zielten, liefen ins Leere. Diese Bedienelemente behielten dadurch
+   Streamlits eigene Farbe aus config.toml und blieben im Light Mode dunkel.
+   Die alten Selektoren stehen weiter daneben, damit aeltere Fassungen
+   ebenfalls getroffen werden; ins Leere zu zielen kostet nichts. */
+[data-testid="stSelectbox"] div[role="group"],
+[data-testid="stSelectbox"] > div > div,
+[data-testid="stDateInputField"],
 [data-baseweb="select"] > div {{
     background-color: {bg_elevated} !important;
     color: {text_primary} !important;
@@ -289,21 +299,35 @@ select:focus-visible, a:focus-visible, [role="tab"]:focus-visible {{
     border-radius: {radius_sm} !important;
 }}
 
+[data-testid="stSelectbox"] div[role="group"] *,
+[data-testid="stDateInputField"] * {{
+    color: {text_primary} !important;
+}}
+
+/* Das Aufklapp-Menue haengt ausserhalb des Elements im Portal */
+[data-testid="portal"] [role="listbox"],
+[data-testid="portal"] ul,
 [data-baseweb="popover"], [data-baseweb="menu"], [role="listbox"] {{
     background-color: {bg_secondary} !important;
     border: {border_thin} solid {border_color} !important;
     border-radius: {radius_md} !important;
 }}
 
+[data-testid="portal"] [role="option"],
+[data-testid="portal"] li,
 [data-baseweb="menu"] li, [role="option"] {{
-    background-color: {bg_secondary} !important;
+    background-color: transparent !important;
     color: {text_primary} !important;
 }}
 
+[data-testid="portal"] [role="option"]:hover,
+[data-testid="portal"] li:hover,
 [data-baseweb="menu"] li:hover, [role="option"]:hover {{
     background-color: {bg_surface} !important;
 }}
 
+/* Kalenderblatt der Datumsauswahl */
+[data-testid="portal"] [data-baseweb="calendar"],
 [data-baseweb="calendar"], [data-baseweb="calendar"] * {{
     background-color: {bg_secondary} !important;
     color: {text_primary} !important;
@@ -343,13 +367,17 @@ select:focus-visible, a:focus-visible, [role="tab"]:focus-visible {{
     border-radius: {radius_md} !important;
 }}
 
-/* ===== REITER ===== */
+/* ===== REITER =====
+   data-baseweb ist mit Streamlit 1.6x entfallen; massgeblich ist
+   [data-testid="stTab"]. Die alten Selektoren bleiben als Rueckfall. */
+[data-testid="stTabs"] [role="tablist"],
 .stTabs [data-baseweb="tab-list"] {{
     gap: {space_1} !important;
     border-bottom: {border_thin} solid {border_color} !important;
     background: transparent !important;
 }}
 
+[data-testid="stTab"],
 .stTabs [data-baseweb="tab"] {{
     color: {text_muted} !important;
     background: transparent !important;
@@ -359,13 +387,19 @@ select:focus-visible, a:focus-visible, [role="tab"]:focus-visible {{
     transition: color {motion_fast} {ease} !important;
 }}
 
+[data-testid="stTab"] *,
 .stTabs [data-baseweb="tab"] * {{ color: inherit !important; }}
+
+[data-testid="stTab"]:hover,
 .stTabs [data-baseweb="tab"]:hover {{ color: {text_primary} !important; }}
 
+[data-testid="stTab"][aria-selected="true"],
+[data-testid="stTab"][aria-selected="true"] *,
 .stTabs [aria-selected="true"], .stTabs [aria-selected="true"] * {{
     color: {accent_blue} !important;
 }}
 
+[data-testid="stTabs"] [role="tablist"] > div:last-child,
 .stTabs [data-baseweb="tab-highlight"] {{
     background-color: {accent_blue} !important;
 }}
