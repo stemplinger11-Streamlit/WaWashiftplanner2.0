@@ -299,3 +299,23 @@ def test_stylesheet_nutzt_die_leitern_statt_eigener_werte():
     assert not unerwartet, (
         f"Werte ausserhalb der Leiter im CSS: {sorted(unerwartet)} - "
         f"passenden Token aus DESIGN verwenden")
+
+
+def test_sekundaerform_schliesst_hauptaktionen_aus():
+    """Sonst sieht die Hauptaktion aus wie eine Nebenaktion.
+
+    '.stFormSubmitButton button' hat eine hoehere Spezifitaet als
+    '[data-testid="stBaseButton-primaryFormSubmit"]'. Da beide Seiten
+    !important tragen, entscheidet die Spezifitaet - ohne das :not()
+    gewinnt die graue Sekundaerform. Im Browser gefunden.
+    """
+    import core_styles
+
+    for selektor in ('.stButton button', '.stFormSubmitButton button'):
+        # Jede Verwendung als Sekundaerform muss den Ausschluss tragen
+        for zeile in core_styles.CSS_VORLAGE.split('\n'):
+            zeile = zeile.strip().rstrip(',')
+            if zeile == selektor:
+                raise AssertionError(
+                    f"'{selektor}' ohne :not([kind*=\"primary\"]) - "
+                    f"ueberschreibt die Hauptaktion")

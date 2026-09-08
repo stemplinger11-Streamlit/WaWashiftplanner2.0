@@ -137,8 +137,14 @@ section[data-testid="stSidebar"] .stButton button:hover * {{
     color: {text_primary} !important;
 }}
 
-/* ===== SCHALTFLAECHEN ===== */
-.stButton button, .stFormSubmitButton button,
+/* ===== SCHALTFLAECHEN =====
+   Die Sekundaerform schliesst Hauptaktionen ausdruecklich aus. Ohne das
+   :not() gewinnt sie: '.stFormSubmitButton button' hat eine hoehere
+   Spezifitaet als '[data-testid="stBaseButton-primaryFormSubmit"]', und
+   !important auf beiden Seiten laesst dann die Spezifitaet entscheiden -
+   die Hauptaktion sah aus wie eine Nebenaktion. */
+.stButton button:not([kind*="primary"]),
+.stFormSubmitButton button:not([kind*="primary"]),
 [data-testid="stBaseButton-secondary"],
 [data-testid="stBaseButton-secondaryFormSubmit"] {{
     background: {bg_elevated} !important;
@@ -154,11 +160,13 @@ section[data-testid="stSidebar"] .stButton button:hover * {{
                 background {motion_fast} {ease} !important;
 }}
 
-.stButton button *, .stFormSubmitButton button * {{
+.stButton button:not([kind*="primary"]) *,
+.stFormSubmitButton button:not([kind*="primary"]) * {{
     color: inherit !important;
 }}
 
-.stButton button:hover, .stFormSubmitButton button:hover {{
+.stButton button:not([kind*="primary"]):hover,
+.stFormSubmitButton button:not([kind*="primary"]):hover {{
     border-color: {accent_blue} !important;
     color: {accent_blue} !important;
 }}
