@@ -293,3 +293,21 @@ def test_stylesheet_fehler_legt_die_app_nicht_lahm(app, monkeypatch):
 
     monkeypatch.setattr(app, 'theme', VeraltetesModul())
     app.inject_css(dark=True)   # darf nicht werfen
+
+
+def test_keine_fest_verdrahteten_farben_in_der_app():
+    """Farben gehoeren in core_theme, nicht in die Oberflaeche.
+
+    Bis zuletzt trug streamlit_app.py eine eigene 15-Farben-Palette aus
+    V8.1 und einen Theme-Umschalter mit fuenf festen Hexwerten. Beides ging
+    am Tokensystem vorbei und sah im Dark Mode entsprechend fremd aus.
+    """
+    import pathlib
+    import re
+
+    quelle = (pathlib.Path(__file__).parent / 'streamlit_app.py').read_text(
+        encoding='utf-8')
+    treffer = re.findall(r'["\']#[0-9A-Fa-f]{3,8}["\']', quelle)
+    assert not treffer, (
+        f"Feste Farbwerte in streamlit_app.py: {sorted(set(treffer))} - "
+        f"gehoeren nach core_theme")

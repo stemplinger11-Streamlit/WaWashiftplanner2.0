@@ -74,23 +74,9 @@ WEEKLY_SLOTS = [
 # Feiertage, Saisonpause und Stornofrist liegen in core_rules.py -
 # dort ohne Streamlit/Firestore und durch test_core_rules.py abgedeckt.
 
-COLORS = {
-    "rot": "#DC143C",
-    "rot_dunkel": "#B22222",
-    "rot_hell": "#FF6B6B",
-    "blau": "#003087",
-    "blau_hell": "#4A90E2",
-    "weiss": "#FFFFFF",
-    "grau_hell": "#F5F7FA",
-    "grau_mittel": "#E1E8ED",
-    "grau_dunkel": "#657786",
-    "text": "#14171A",
-    "erfolg": "#17BF63",
-    "warnung": "#FFAD1F",
-    "fehler": "#E0245E",
-    "orange": "#FF8C00",
-    "orange_hell": "#FFA500"
-}
+# Farbe fuer E-Mails. Bewusst aus der hellen Palette: E-Mail-Programme
+# kennen unser Stylesheet nicht und zeigen fast immer weissen Grund.
+MAIL_AKZENT = theme.LIGHT['accent_blue']
 
 # ===== FIREBASE INIT =====
 @st.cache_resource
@@ -1474,59 +1460,27 @@ def show_navigation():
         st.markdown("---")
         st.markdown("### 🎨 Design")
     
-        # Custom iOS-Style Toggle mit CSS
+        # Umschalter bewusst ohne eigenes HTML: Welcher Modus laeuft,
+        # zeigt die App selbst - eine Kachel, die es nochmal behauptet, ist
+        # Dekoration. Der Knopf sagt stattdessen, was passiert. Die frühere
+        # Fassung trug ausserdem fuenf fest verdrahtete Farben und einen
+        # Radius ausserhalb der Leiter.
         current_mode = st.session_state.dark_mode
-    
-        toggle_html = f"""
-        <style>
-        .theme-toggle {{
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0.75rem 1rem;
-            background: {'#1E1E1E' if current_mode else '#FFFFFF'};
-            border: 2px solid {'#2C2C2C' if current_mode else '#E0E0E0'};
-            border-radius: 12px;
-            margin: 0.5rem 0;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, {'0.3' if current_mode else '0.1'});
-            transition: all 0.3s ease;
-        }}
-    
-        .theme-label {{
-            font-size: 0.9rem;
-            font-weight: 500;
-            color: {'#FFFFFF' if current_mode else '#1A1A1A'};
-        }}
-    
-        .theme-icon {{
-            font-size: 1.2rem;
-        }}
-        </style>
-    
-        <div class="theme-toggle">
-            <span class="theme-icon">{'🌙' if current_mode else '☀️'}</span>
-            <span class="theme-label">{'Dark Mode' if current_mode else 'Light Mode'}</span>
-        </div>
-        """
-    
-        st.markdown(toggle_html, unsafe_allow_html=True)
-    
-        # Toggle Button
-        col1, col2 = st.columns(2)
-        with col1:
-            if not current_mode:
-                if st.button("🌙 Dark", key="switch_dark", use_container_width=True):
-                    st.session_state.dark_mode = True
-                    if is_admin:
-                        ww_db.set_setting('dark_mode', 'true')
-                    st.rerun()
-        with col2:
-            if current_mode:
-                if st.button("☀️ Light", key="switch_light", use_container_width=True):
-                    st.session_state.dark_mode = False
-                    if is_admin:
-                        ww_db.set_setting('dark_mode', 'false')
-                    st.rerun()
+
+        if current_mode:
+            if st.button("☀️ Zu hellem Design wechseln",
+                         key="switch_light", use_container_width=True):
+                st.session_state.dark_mode = False
+                if is_admin:
+                    ww_db.set_setting('dark_mode', 'false')
+                st.rerun()
+        else:
+            if st.button("🌙 Zu dunklem Design wechseln",
+                         key="switch_dark", use_container_width=True):
+                st.session_state.dark_mode = True
+                if is_admin:
+                    ww_db.set_setting('dark_mode', 'true')
+                st.rerun()
 
         st.divider()
         
@@ -3750,7 +3704,7 @@ def export_page():
                     subject = f"Dienstplan Backup - {datetime.now().strftime('%d.%m.%Y')}"
                     body = f"""
                     <html><body>
-                    <h2 style="color:{COLORS['rot']};">🌊 Automatisches Backup</h2>
+                    <h2 style="color:{MAIL_AKZENT};">🌊 Automatisches Backup</h2>
                     <p><strong>Datum:</strong> {datetime.now().strftime('%d.%m.%Y %H:%M')}</p>
                     <p><strong>Buchungen:</strong> {len(bookings)}</p>
                     <p><strong>Benutzer:</strong> {len(users)}</p>
