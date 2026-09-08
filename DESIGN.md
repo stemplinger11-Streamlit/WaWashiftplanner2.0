@@ -1,5 +1,9 @@
 # Designguide
 
+**Zum Anschauen:** [Dienstplan Designsystem](https://claude.ai/code/artifact/ff9fb08f-ff56-4d66-bc63-8b878c5ad5ef)
+— dieselben Regeln mit echten Farbfeldern, gerenderter Schriftleiter und
+Beispielkarten. Hexcodes in einer Tabelle kann niemand beurteilen.
+
 Verbindliche Gestaltungsregeln für den Dienstplan. Wer etwas zur Oberfläche
 hinzufügt, wählt aus den Leitern unten — es gibt keine freien Werte.
 
