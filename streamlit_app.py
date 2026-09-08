@@ -344,13 +344,25 @@ def wants_sms(user, event):
 
 # ===== CSS INJECTION (PROFESSIONELLES DESIGN) =====
 def inject_css(dark=False):
-    """Faerbt die App nach der geprueften Palette.
+    """Faerbt die App nach den geprueften Gestaltungstoken.
 
-    Farben: core_theme.py (durch test_core_theme.py gegen WCAG AA geprueft)
-    Regeln: core_styles.py
+    Farben und Token: core_theme.py (gegen WCAG AA geprueft)
+    Regeln: core_styles.py, Begruendungen in DESIGN.md
+
+    Scheitert der Aufbau, bleibt die App unformatiert, aber bedienbar.
+    Gestaltung darf nie den Zugang verhindern. Der praktische Fall dafuer:
+    Streamlit Cloud laedt nach einem Code-Push das Hauptskript neu, behaelt
+    importierte Module aber im alten Stand im Speicher - bis zum Neustart
+    kennt es dann eine neu hinzugekommene Funktion nicht.
     """
+    try:
+        css = styles.build_css(theme.tokens(dark))
+    except Exception as e:
+        print(f"[Hinweis] Stylesheet nicht aufgebaut: {type(e).__name__}: {e}")
+        return
+
     st.markdown(
-        "<style>" + styles.build_css(theme.tokens(dark)) + "</style>",
+        "<style>" + css + "</style>",
         unsafe_allow_html=True
     )
 

@@ -277,3 +277,19 @@ def test_rangliste_ueber_die_app(app):
     assert liste[0]['name'] == 'Anna'
     assert liste[0]['platz'] == 1
     assert liste[0]['medaille'] == '🥇'
+
+
+def test_stylesheet_fehler_legt_die_app_nicht_lahm(app, monkeypatch):
+    """Ein veraltetes Modul im Speicher darf keinen Traceback zeigen.
+
+    Genau das trat nach einem Code-Push auf: Streamlit Cloud lud das
+    Hauptskript neu, behielt core_theme aber im alten Stand - die App war
+    komplett unbedienbar, statt nur unformatiert zu sein.
+    """
+    class VeraltetesModul:
+        def palette(self, dark=False):
+            return {}
+        # tokens() fehlt absichtlich - wie im alten Modulstand
+
+    monkeypatch.setattr(app, 'theme', VeraltetesModul())
+    app.inject_css(dark=True)   # darf nicht werfen
