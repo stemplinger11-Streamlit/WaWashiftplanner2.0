@@ -399,7 +399,14 @@ select:focus-visible, a:focus-visible, [role="tab"]:focus-visible {{
     color: {accent_blue} !important;
 }}
 
-[data-testid="stTabs"] [role="tablist"] > div:last-child,
+/* Der aktive Reiter bekommt seine Unterstreichung ausdruecklich.
+   Der frühere Versuch, Streamlits eigenen Markierungsbalken ueber
+   '> div:last-child' zu treffen, faerbte stattdessen den letzten Reiter
+   vollflaechig blau - geraten statt benannt. */
+[data-testid="stTab"][aria-selected="true"] {{
+    border-bottom: 3px solid {accent_blue} !important;
+}}
+
 .stTabs [data-baseweb="tab-highlight"] {{
     background-color: {accent_blue} !important;
 }}

@@ -359,3 +359,18 @@ def test_bedienelemente_ueber_testid_angesprochen():
         assert f'[data-testid="{testid}"]' in v, (
             f'{testid} wird nicht angesprochen - verlaesst sich das CSS hier '
             f'noch auf data-baseweb?')
+
+
+def test_keine_geratenen_strukturselektoren():
+    """':last-child' auf Streamlits internem Aufbau ist geraten, nicht benannt.
+
+    Ein solcher Selektor faerbte den letzten Reiter vollflaechig blau,
+    weil dort nicht der Markierungsbalken sass, sondern ein Reiter. Wo wir
+    einen Zustand meinen, nennen wir ihn: [aria-selected="true"].
+    """
+    import core_styles
+
+    for zeile in core_styles.CSS_VORLAGE.split('\n'):
+        if '[role="tablist"]' in zeile:
+            assert ':last-child' not in zeile and ':first-child' not in zeile, (
+                f'Geratener Strukturselektor auf der Reiterleiste: {zeile.strip()}')
