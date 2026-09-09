@@ -203,6 +203,8 @@ Wachdienst. Das Datenmodell (eine Buchung je Termin) bleibt damit richtig.
 - Rundnachricht an alle aktiven Nutzer
 - Admin-Notiz an einer Buchung, für den Nutzer sichtbar
 - Kalenderdatei (.ics) für eigene Termine und für alle Dienste
+- Termineinladung per Mail beim Buchen, Absage beim Stornieren,
+  aktualisierter Termin bei einer Admin-Notiz
 - Vertretung suchen und übernehmen
 - Eigene Dienstbilanz (Dienste und Stunden der Saison)
 - Übersicht der nächsten acht Wochen
@@ -247,17 +249,36 @@ git push target main
 Umstellen ließe sich das mit `git branch -u target/main main` — bewusst noch
 nicht getan, weil es das Verhalten aller künftigen Pushes ändert.
 
-### 1. Zusammengeführten Stand pushen
+### ✅ 1. Zusammengeführten Stand pushen — erledigt am 09.09.2026
 
-`main` enthält lokal fünf Commits zum Azure-Hosting (Entwurf, Plan,
-`core_secrets.py` mit Tests, `startup.sh`, Deployment-Workflow,
-Betriebsanleitung). Tests grün: 379 bestanden, 2 übersprungen, pyflakes sauber.
-**Der Push steht noch aus** — siehe Warnung oben.
+`git push target main` ist durch, acht Commits liegen in
+`WaWashiftplanner2.0`. Die Warnung oben gilt unverändert weiter: `main`
+verfolgt nach wie vor `origin/main`, also das **alte** Repo.
 
-### 2. Automatische Auslieferung erstmals prüfen
+### ⚠️ 2. Automatische Auslieferung — geprüft, **Deploy scheitert**
 
-Nach dem Push läuft „Tests" auf `main`; war sie erfolgreich, zieht
-„Deploy nach Azure" nach. Zu prüfen ist beides:
+Stand 09.09.2026: „Tests" lief mit `success` durch, „Deploy nach Azure" ist
+angesprungen und nach drei Sekunden am Schritt **„An Azure anmelden"**
+gescheitert
+([Lauf 34358842682](https://github.com/stemplinger11-Streamlit/WaWashiftplanner2.0/actions/runs/34358842682)).
+Alle folgenden Schritte wurden übersprungen; die laufende App auf Azure ist
+davon unberührt.
+
+Geprüft und in Ordnung: Die föderierte Anmeldung an
+`gh-deploy-wawa-shiftplaner` trägt genau das richtige Subject
+`repo:stemplinger11-Streamlit/WaWashiftplanner2.0:ref:refs/heads/main`, die
+Rollenzuweisung *Website Contributor* auf `app-wawa-shiftplaner` existiert,
+und der Workflow setzt `permissions: id-token: write`.
+
+Damit bleiben zwei Verdächtige, die im Protokoll unterschiedlich aussehen:
+
+| Meldung im Protokoll | Ursache | Behebung |
+|---|---|---|
+| `Not all values are present` | Die drei Werte liegen als **Secrets** statt als **Variables**, oder nur im alten Repo | Unter *Settings → Secrets and variables → Actions → Variables* anlegen; der Workflow liest `vars.*` |
+| `AADSTS70021` | Der Anspruch passt nicht zum `workflow_run`-Auslöser | Zweite föderierte Anmeldung ergänzen |
+
+**Nächster Schritt:** die rote Meldung aus dem Lauf lesen — sie entscheidet
+zwischen beiden. Erst danach sinnvoll:
 
 - Der Lauf endet mit `success` und der Schritt „Erreichbarkeit pruefen" meldet
   HTTP 200.
@@ -321,12 +342,26 @@ Firestore, Streamlit und Twilio als Auftragsverarbeiter und beschreibt das
 Anmelde-Cookie. **Inhaltlich verantworten muss ihn der Verein**, nicht ich –
 insbesondere Verantwortlicher, Aufbewahrungsfristen und Kontaktweg.
 
-### B. Echtes Kalender-Abo statt Download
-Heute wird eine `.ics`-Datei heruntergeladen: einmal importieren, fertig.
-Ändert sich später eine Buchung, merkt der Kalender das nicht. Ein echtes Abo
-bräuchte eine dauerhaft erreichbare Adresse, die Streamlit Cloud nicht
-bereitstellt — also eine Cloud Function oder ähnliches. **Das ist eine
-Entscheidung über zusätzliche Infrastruktur und Kosten.**
+### ✅ B. Kalendereintrag beim Buchen — erledigt am 09.09.2026
+Statt eines Abos bekommt der Nutzer eine **Termineinladung** an die Mail,
+die er ohnehin erhält: Buchung → Einladung, Storno → Absage, Notiz des
+Admins → aktualisierter Termin. Sein Kalender legt den Termin selbst an
+und ändert ihn wieder — ohne neue Infrastruktur, ohne öffentliche Adresse
+und ohne zusätzliche Firestore-Zugriffe.
+
+Eingebaut in `Mailer.send_booking_confirmation()`, `send_cancellation()`
+und die neue `send_booking_note()`; alle elf Aufrufwege sind dadurch
+abgedeckt. Der Kalenderteil entsteht in `core_ics.baue_einladung()` und
+`baue_absage()`.
+
+**Zwei Einstellungen sind vor dem Saisonstart zu füllen** (Verwaltung →
+Einstellungen → Kalendereinladung): der **Ort des Dienstes** (steht leer,
+dann fehlt im Termin die Navigation) und die **Adresse der App**
+(vorbelegt mit der Azure-Adresse).
+
+Was das bewusst nicht kann: Es ist ein Versand, kein Abgleich. Wer den
+Termin löscht, bekommt ihn nicht von selbst zurück — die Mail bleibt ihm.
+Der ICS-Download bleibt als zweiter Weg bestehen.
 
 ### C. Echte App statt Lesezeichen
 Der Hinweis zum Ablegen auf dem Handy funktioniert, aber es bleibt ein
@@ -334,10 +369,26 @@ Browser-Lesezeichen: kein eigenes Symbol, kein Offline-Betrieb. Eine richtige
 PWA bräuchte Zugriff auf die ausgelieferte `index.html`, den Streamlit Cloud
 nicht gewährt. **Entscheidung: eigenes Hosting oder so belassen.**
 
-### D. Firestore-Index anlegen
-In der [Firebase Console](https://console.firebase.google.com) unter
-*Firestore Database → Indexes → Zusammengesetzt*: Collection `bookings`,
-Felder `status` (aufsteigend) und `slot_date` (aufsteigend).
+### D. Firestore-Indizes anlegen — es sind **zwei**, und der vorhandene hilft nicht
+Geprüft am 09.09.2026: In `bookings` existiert bereits ein Index
+`slot_date, status`. **Der bedient keine der beiden Abfragen** — Firestore
+verlangt die Gleichheitsfelder *vor* dem Bereichsfeld, und beide Abfragen
+filtern `status` per Gleichheit und `slot_date` als Bereich.
+
+Anzulegen in der [Firebase Console](https://console.firebase.google.com)
+unter *Firestore Database → Indexes → Zusammengesetzt*, Collection
+`bookings`, alle Felder aufsteigend:
+
+1. `status`, `slot_date` — für `get_week_bookings()`
+2. `user_email`, `status`, `slot_date` — für `get_user_bookings(future_only=True)`
+
+Der zweite ist der dringendere: `get_week_bookings()` fängt den Fehler ab
+und liest im Fallback alle Buchungen, `get_user_bookings()` hat **keinen**
+Fallback und liefert dann stillschweigend eine leere Liste — „Meine
+Buchungen“ wäre leer, ohne dass jemand einen Fehler sähe.
+
+Per Dienstkonto ist das nicht machbar: Das Konto der App darf lesen, nicht
+verwalten (HTTP 403 beim Anlegen).
 
 Ohne den Index läuft die App weiter, fällt aber auf das Laden **aller**
 Buchungen mit Filterung im Speicher zurück. Das wird mit wachsender

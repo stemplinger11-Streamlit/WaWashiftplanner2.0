@@ -9,7 +9,10 @@ import pytest
 
 from core_ics import (
     als_utc,
+    baue_absage,
+    baue_einladung,
     baue_ics,
+    laufende_nummer,
     escape_text,
     falte,
     ics_zeit,
@@ -18,6 +21,12 @@ from core_ics import (
 )
 
 JETZT = datetime(2026, 9, 4, 10, 0, 0, tzinfo=timezone.utc)
+
+
+def entfalte(text):
+    """Umbruch nach RFC 5545 rueckgaengig machen, damit Erwartungen an
+    lange Zeilen nicht am Faltpunkt scheitern."""
+    return text.replace(chr(13) + chr(10) + " ", "")
 
 
 def buchung(**kw):
@@ -195,3 +204,100 @@ def test_jede_zeile_haelt_die_laengenbegrenzung():
     lang = buchung(admin_note="Sehr langer Hinweis " * 20)
     for zeile in baue_ics([lang], jetzt=JETZT).split("\r\n"):
         assert len(zeile.encode('utf-8')) <= 75
+
+
+# ===== EINLADUNG UND ABSAGE =====
+#
+# Anders als baue_ics() erzeugen diese beiden eine Nachricht nach iTIP:
+# der Kalender des Empfaengers legt den Termin selbst an und aendert ihn
+# spaeter wieder, statt dass jemand eine Datei importiert.
+
+def test_einladung_ist_eine_anfrage():
+    text = baue_einladung(buchung(), 'verein@example.de', jetzt=JETZT)
+    assert 'METHOD:REQUEST' in text
+    assert 'STATUS:CONFIRMED' in text
+
+
+def test_absage_sagt_den_termin_ab():
+    text = baue_absage(buchung(), 'verein@example.de', jetzt=JETZT)
+    assert 'METHOD:CANCEL' in text
+    assert 'STATUS:CANCELLED' in text
+
+
+def test_absage_traegt_dieselbe_kennung_wie_die_einladung():
+    """Sonst sagt die Absage einen Termin ab, den es im Kalender nicht gibt."""
+    b = buchung()
+    ein = baue_einladung(b, 'verein@example.de', jetzt=JETZT)
+    ab = baue_absage(b, 'verein@example.de', jetzt=JETZT)
+    kennung = [z for z in ein.split('\r\n') if z.startswith('UID:')]
+    assert kennung == [z for z in ab.split('\r\n') if z.startswith('UID:')]
+
+
+def test_kennung_haengt_nicht_an_der_dokument_id():
+    """Beim Umbuchen wird die alte Buchung geloescht - die Absage kennt
+    deren Dokument-ID nicht mehr. Datum, Uhrzeit und Adresse muessen
+    deshalb genuegen."""
+    mit = baue_einladung(buchung(id='abc123'), 'verein@example.de', jetzt=JETZT)
+    ohne = baue_einladung(buchung(id=None), 'verein@example.de', jetzt=JETZT)
+    kennung = lambda t: [z for z in t.split('\r\n') if z.startswith('UID:')]
+    assert kennung(mit) == kennung(ohne)
+
+
+def test_laufende_nummer_steigt_mit_der_zeit():
+    """Buchen, stornieren, denselben Slot neu buchen: die Kennung ist
+    wieder dieselbe. Eine Einladung mit kleinerer Nummer als die vorherige
+    Absage wird von Kalendern stillschweigend verworfen."""
+    frueher = laufende_nummer(datetime(2026, 9, 4, 10, 0, tzinfo=timezone.utc))
+    spaeter = laufende_nummer(datetime(2026, 9, 4, 10, 5, tzinfo=timezone.utc))
+    assert spaeter > frueher
+
+
+def test_absage_traegt_eine_hoehere_nummer_als_die_einladung():
+    b = buchung()
+    ein = baue_einladung(b, 'verein@example.de',
+                         jetzt=datetime(2026, 9, 4, 10, 0, tzinfo=timezone.utc))
+    ab = baue_absage(b, 'verein@example.de',
+                     jetzt=datetime(2026, 9, 4, 11, 0, tzinfo=timezone.utc))
+    nummer = lambda t: int([z for z in t.split('\r\n')
+                            if z.startswith('SEQUENCE:')][0][9:])
+    assert nummer(ab) > nummer(ein)
+
+
+def test_eingeladen_wird_wer_gebucht_hat():
+    text = entfalte(baue_einladung(buchung(), 'verein@example.de', jetzt=JETZT))
+    assert 'ORGANIZER;CN=Wasserwacht:mailto:verein@example.de' in text
+    assert 'mailto:anna@example.de' in text
+
+
+def test_keine_rueckmeldung_angefordert():
+    """Der Nutzer hat in der App gebucht - er soll nicht noch einmal
+    zu- oder absagen, und im Vereinspostfach sollen keine Antworten
+    auflaufen, die niemand liest."""
+    text = entfalte(baue_einladung(buchung(), 'verein@example.de', jetzt=JETZT))
+    teilnehmer = [z for z in text.split('\r\n') if z.startswith('ATTENDEE')][0]
+    assert 'PARTSTAT=ACCEPTED' in teilnehmer
+    assert 'RSVP=FALSE' in teilnehmer
+
+
+def test_einladung_enthaelt_ort_notiz_und_link():
+    text = entfalte(baue_einladung(
+        buchung(admin_note='Bitte Schluessel mitbringen'),
+        'verein@example.de', ort='Freibad Hauzenberg',
+        link='https://app-wawa-shiftplaner.azurewebsites.net',
+        stornofrist=12, jetzt=JETZT))
+    assert 'LOCATION:Freibad Hauzenberg' in text
+    assert 'Bitte Schluessel mitbringen' in text
+    assert 'URL:https://app-wawa-shiftplaner.azurewebsites.net' in text
+    assert '12 Stunden' in text
+
+
+def test_absage_ohne_erinnerung():
+    """Ein abgesagter Termin darf nicht mehr klingeln."""
+    assert 'BEGIN:VALARM' not in baue_absage(buchung(), 'verein@example.de',
+                                             jetzt=JETZT)
+
+
+def test_einladung_ohne_lesbare_zeit_gibt_nichts_zurueck():
+    """Lieber keine Einladung als eine kaputte - die Mail geht trotzdem raus."""
+    assert baue_einladung(buchung(slot_time='kaputt'), 'verein@example.de',
+                          jetzt=JETZT) is None

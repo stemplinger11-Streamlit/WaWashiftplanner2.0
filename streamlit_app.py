@@ -52,6 +52,12 @@ from core_auth import (
 )
 import extra_streamlit_components as stx
 
+# Adresse, die in Kalendereinladungen verlinkt wird. Bewusst die
+# Azure-Adresse: Eine Einladung steht jahrelang im Kalender des Nutzers,
+# und die Streamlit-Instanz wird abgeschaltet. Unter Verwaltung ->
+# Einstellungen ueberschreibbar.
+APP_URL = "https://app-wawa-shiftplaner.azurewebsites.net"
+
 # ===== PAGE CONFIG =====
 st.set_page_config(
     page_title="Wasserwacht Dienstplan+",
@@ -976,7 +982,8 @@ class Mailer:
             self.server = self.port = self.user = self.pw = self.admin_receiver = ""
             self.fromname = "Dienstplan"
     
-    def send(self, to, subject, body, attachments=None, html=False):
+    def send(self, to, subject, body, attachments=None, html=False,
+             kalender=None):
         """
         Sendet eine E-Mail mit detailliertem Error-Handling
         Returns: (success: bool, error_message: str)
@@ -995,6 +1002,19 @@ class Mailer:
             msg['Date'] = email.utils.formatdate(localtime=True)
             msg.attach(MIMEText(body, 'html' if html else 'plain', 'utf-8'))
             
+            if kalender:
+                # Eine Einladung muss als text/calendar mit passender METHOD
+                # anhaengen - nur so erkennen Gmail, Apple Mail und Outlook
+                # sie als Termin statt als beliebige Datei.
+                methode, inhalt = kalender
+                teil = MIMEBase('text', 'calendar', method=methode,
+                                charset='utf-8')
+                teil.set_payload(inhalt.encode('utf-8'))
+                encoders.encode_base64(teil)
+                teil.add_header('Content-Disposition',
+                                'attachment; filename=termin.ics')
+                msg.attach(teil)
+
             if attachments:
                 for filename, data in attachments:
                     part = MIMEBase('application', 'octet-stream')
@@ -1036,7 +1056,8 @@ class Mailer:
         data.update({k: v for k, v in extra.items() if v is not None})
         return data
 
-    def _send_template(self, to, template_key, default_subject, default_body, data):
+    def _send_template(self, to, template_key, default_subject,
+                       default_body, data, kalender=None):
         """Laedt das Template aus den Einstellungen, ersetzt Platzhalter, sendet."""
         if not to:
             return False, "❌ E-Mail: Keine Empfänger-Adresse angegeben"
@@ -1049,7 +1070,38 @@ class Mailer:
             subject = subject.replace(placeholder, str(value))
             body = body.replace(placeholder, str(value))
 
-        return self.send(to, subject, body)
+        return self.send(to, subject, body, kalender=kalender)
+
+    def _kalender(self, methode, user_email, user_name, slot_date,
+                  slot_time, admin_note=None):
+        """Kalenderteil fuer eine Bestaetigungs-, Storno- oder Hinweismail.
+
+        Der Nutzer wird zu seinem eigenen Dienst eingeladen; sein Kalender
+        legt den Termin selbst an und aendert ihn spaeter wieder. Der Teil
+        haengt deshalb an genau den Mails, die es ohnehin schon gibt -
+        damit sind alle Buchungswege ohne eigenes Zutun abgedeckt.
+
+        None, wenn kein Absender eingerichtet ist oder sich die Buchung
+        nicht in Zeiten uebersetzen laesst. Die Mail geht dann ohne
+        Kalenderteil hinaus statt gar nicht.
+        """
+        if not self.user:
+            return None
+        org = ww_db.get_setting('org_name', 'Wasserwacht')
+        buchung = {
+            'slot_date': slot_date,
+            'slot_time': slot_time,
+            'user_email': user_email,
+            'user_name': user_name,
+            'admin_note': admin_note,
+        }
+        bauen = ics.baue_absage if methode == 'CANCEL' else ics.baue_einladung
+        inhalt = bauen(buchung, self.user, organisator_name=org,
+                       titel="Dienst " + org,
+                       ort=ww_db.get_setting('standort', ''),
+                       link=ww_db.get_setting('app_url', APP_URL),
+                       stornofrist=get_cancel_deadline_hours())
+        return (methode, inhalt) if inhalt else None
 
     def send_booking_confirmation(self, user_email, user_name, slot_date, slot_time):
         """Buchungsbestätigung senden"""
@@ -1068,7 +1120,9 @@ Bei Fragen melde dich gerne unter {org_email}.
 Viele Grüße,
 Dein {org_name} Team 🌊""",
             self._base_data(name=user_name, date=fmt_de(slot_date),
-                            time=slot_time, email=user_email)
+                            time=slot_time, email=user_email),
+            kalender=self._kalender('REQUEST', user_email, user_name,
+                                    slot_date, slot_time)
         )
 
     def send_cancellation(self, user_email, user_name, slot_date, slot_time, comment=None):
@@ -1087,7 +1141,38 @@ Viele Grüße,
 Dein {org_name} Team 🌊""",
             self._base_data(name=user_name, date=fmt_de(slot_date),
                             time=slot_time, email=user_email,
-                            comment=("\n💬 Grund: " + comment + "\n") if comment else "")
+                            comment=("\n💬 Grund: " + comment + "\n") if comment else ""),
+            kalender=self._kalender('CANCEL', user_email, user_name,
+                                    slot_date, slot_time)
+        )
+
+    def send_booking_note(self, user_email, user_name, slot_date,
+                          slot_time, notiz):
+        """Hinweis eines Admins zu einer Buchung.
+
+        Traegt dieselbe Kennung wie die urspruengliche Einladung und eine
+        hoehere laufende Nummer: der Kalender aendert den vorhandenen
+        Termin, statt einen zweiten anzulegen.
+        """
+        return self._send_template(
+            user_email, 'email_booking_note',
+            'Hinweis zu deinem Dienst am {date}',
+            """Hallo {name},
+
+zu deinem Dienst gibt es einen Hinweis:
+
+📅 Datum: {date}
+⏰ Uhrzeit: {time}
+💬 {note}
+
+Der Termin in deinem Kalender wurde aktualisiert.
+
+Viele Grüße,
+Dein {org_name} Team 🌊""",
+            self._base_data(name=user_name, date=fmt_de(slot_date),
+                            time=slot_time, email=user_email, note=notiz),
+            kalender=self._kalender('REQUEST', user_email, user_name,
+                                    slot_date, slot_time, admin_note=notiz)
         )
 
     def send_reminder(self, user_email, user_name, slot_date, slot_time):
@@ -2641,7 +2726,22 @@ def verwaltung_page():
                             if st.button("💾 Notiz speichern",
                                          key=f"notiz_save_{booking['id']}"):
                                 if ww_db.set_booking_note(booking['id'], notiz.strip()):
+                                    # Die Einladung ging beim Buchen hinaus,
+                                    # die Notiz kommt meist spaeter. Eine
+                                    # zweite Einladung mit gleicher Kennung
+                                    # aendert den Termin im Kalender, statt
+                                    # einen zweiten anzulegen.
+                                    hinweis = mailer.send_booking_note(
+                                        booking.get('user_email'),
+                                        booking.get('user_name'),
+                                        booking.get('slot_date'),
+                                        booking.get('slot_time'),
+                                        notiz.strip())
                                     st.success("✅ Notiz gespeichert")
+                                    if not hinweis[0]:
+                                        st.caption(
+                                            "Der Nutzer wurde nicht "
+                                            "benachrichtigt: " + hinweis[1])
                                 else:
                                     st.error("❌ Speichern fehlgeschlagen")
                         
@@ -3234,6 +3334,33 @@ Details:
                                      help="Wird in allen E-Mails und SMS als {org_name} eingesetzt")
             if st.form_submit_button("💾 Speichern", type="primary"):
                 if ww_db.set_setting('org_name', org_name):
+                    st.success("✅ Gespeichert")
+                    st.rerun()
+                else:
+                    st.error("❌ Fehler beim Speichern")
+
+        st.divider()
+
+        # ===== KALENDER =====
+        st.markdown("### 📅 Kalendereinladung")
+        st.caption("Wer eine Schicht bucht, bekommt den Termin als "
+                   "Einladung in seinen Kalender. Diese beiden Angaben "
+                   "stehen darin.")
+        with st.form("kalender_form"):
+            standort = st.text_input(
+                "Ort des Dienstes",
+                value=ww_db.get_setting('standort', ''),
+                help="Erscheint im Termin und ermoeglicht die Navigation, "
+                     "etwa: Freibad Hauzenberg, Badstr. 1")
+            app_url = st.text_input(
+                "Adresse der App",
+                value=ww_db.get_setting('app_url', APP_URL),
+                help="Wird im Termin verlinkt, damit der Nutzer von dort "
+                     "aus stornieren kann")
+            if st.form_submit_button("💾 Speichern", type="primary"):
+                ok = ww_db.set_setting('standort', standort.strip())
+                ok = ww_db.set_setting('app_url', app_url.strip()) and ok
+                if ok:
                     st.success("✅ Gespeichert")
                     st.rerun()
                 else:
@@ -4231,6 +4358,23 @@ Freigeben unter: Benutzer -> Offene Freigaben"""
 
 {org_name}"""
         },
+        'email_booking_note': {
+            'name': '📝 E-Mail - Hinweis zur Buchung',
+            'type': 'email',
+            'default_subject': 'Hinweis zu deinem Dienst am {date}',
+            'default_body': """Hallo {name},
+
+zu deinem Dienst gibt es einen Hinweis:
+
+📅 Datum: {date}
+⏰ Uhrzeit: {time}
+💬 {note}
+
+Der Termin in deinem Kalender wurde aktualisiert.
+
+Viele Grüße,
+Dein {org_name} Team 🌊"""
+        },
         'sms_reminder': {
             'name': '📱 SMS - Erinnerung',
             'type': 'sms',
@@ -4261,6 +4405,7 @@ Freigeben unter: Benutzer -> Offene Freigaben"""
             - `{org_name}` - Organisationsname
             - `{org_email}` - Organisation E-Mail
             - `{current_date}` - Heutiges Datum
+            - `{note}` - Hinweis des Admins (nur Hinweismail)
             """)
         st.caption("💡 Platzhalter werden automatisch durch echte Daten ersetzt")
     
