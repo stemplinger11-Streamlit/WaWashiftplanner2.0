@@ -185,3 +185,30 @@ Zeitlimit — der Bau läuft auf dem Server weiter. Der wahre Stand steht in
 Die alte Instanz läuft vorerst weiter und schreibt in dieselbe
 Firestore-Datenbank. Das ist gewollt, aber kein Dauerzustand: Vor dem
 Abschalten wird abgestimmt, ab wann die Azure-Adresse die maßgebliche ist.
+
+## Lesezugriff des Hermes-Agenten
+
+Seit 09.09.2026 liest der Hermes-Agent (Azure-VM `vm-hermes`) die Firestore-Datenbank
+mit einem **eigenen Dienstkonto**:
+
+| | |
+|---|---|
+| Dienstkonto | `hermes-readonly@wasserwacht-dienstplan.iam.gserviceaccount.com` |
+| Rolle | `roles/datastore.viewer` — nur lesen, projektweit |
+| Zugriffsweg | direkt auf Firestore, **nicht** über diese Web-App |
+
+Der Agent nutzt weder die Streamlit-Oberfläche noch einen App-Login. Der Admin-Account
+`WaWaBot / mex100bot@gmail.com` in der `users`-Collection bleibt trotzdem sinnvoll: Er
+ist die Spur in den Daten, sobald ein späteres Schreib-Werkzeug `approved_by` oder
+`cancelled_by` setzt.
+
+**Für die Entwicklung an dieser App heißt das:** Feldnamen in `bookings` und `users`
+sind jetzt eine Schnittstelle nach außen. Wer `slot_date`, `slot_time`, `status`,
+`user_email`, `user_name`, `pending_approval` oder `active` umbenennt, muss
+`~/.hermes/scripts/wawa_query.py` auf der Hermes-VM mit anpassen — sonst liefert der
+Agent stillschweigend leere Ergebnisse statt eines Fehlers.
+
+Schreibzugriff hat der Agent **nicht**; ein Schreibversuch endet mit HTTP 403.
+Freigaben und Stornos laufen weiter über die App. Details und die Befehlsliste stehen
+in `azure-hermes/README.md`.
+
