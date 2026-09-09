@@ -20,9 +20,9 @@ Diese Punkte gelten für **jede** Änderung und dürfen nicht gebrochen werden:
 
 | Thema | Ist-Zustand | Konsequenz für 2.0 |
 |---|---|---|
-| **Hosting** | Streamlit Community Cloud (streamlit.io) | Bleibt vorerst. Kein eigener Server, **kein persistenter Hintergrundprozess**, App schläft bei Inaktivität ein. |
+| **Hosting** | Streamlit Community Cloud **und** Azure App Service (seit 09.09.2026, parallel) | Beide laufen gegen dieselbe Firestore-Datenbank. Auf Azure schläft die App nicht ein, **einen persistenten Hintergrundprozess gibt es aber weiterhin nicht** – der Plan bleibt eine Streamlit-App mit einer Instanz. Solange die alte Instanz lebt, muss jede Änderung auf beiden laufen. |
 | **Datenbank** | Firebase / Firestore, **mit Bestandsdaten** | Schema-Änderungen nur additiv oder mit Migrationsskript. Kein Feld umbenennen ohne Migration. |
-| **Secrets** | Eine einzige Datei (`secrets.toml`), in Streamlit.io hinterlegt: Firebase-Credentials, Admin-Zugang, Twilio | Struktur der Keys beibehalten, sonst bricht das Deployment. Secrets gehören **nie** ins Repo. |
+| **Secrets** | Eine einzige Datei (`secrets.toml`): in Streamlit.io hinterlegt, auf Azure base64-kodiert im Key Vault `kv-wawa-web-hzb` | Struktur der Keys beibehalten, sonst bricht das Deployment. Secrets gehören **nie** ins Repo. |
 | **Deadline** | Saisonstart **Mitte September 2026** (~2 Wochen) | Priorisierung nach P0 → P1 → P2. Alles was P0 ist, muss vorher fertig sein. |
 | **Bestandsnutzer** | Dürfen **nicht** verloren gehen | Keine Neuanlage der `users`-Collection, keine Passwort-Hash-Migration ohne Fallback-Login, keine E-Mail-Änderung an bestehenden Datensätzen. |
 
@@ -216,6 +216,99 @@ Wachdienst. Das Datenmodell (eine Buchung je Termin) bleibt damit richtig.
 Mehrere Personen je Termin · Qualifikationen · Anwesenheitsbestätigung
 (bleibt bei der Unterschrift im Ordner) · Serientermine · Saison-Ampel ·
 automatischer Aufruf bei unbesetzten Terminen
+
+---
+
+## Azure-Hosting — offene Punkte (Stand 09.09.2026)
+
+Die App läuft seit dem 09.09.2026 zusätzlich auf Azure App Service unter
+https://app-wawa-shiftplaner.azurewebsites.net — öffentlich erreichbar,
+dauerhaft wach, rund 11,32 € im Monat. Einzelheiten zum Betrieb stehen in
+[`docs/BETRIEB-AZURE.md`](docs/BETRIEB-AZURE.md), Entwurf und Umsetzungsplan
+unter `docs/superpowers/`.
+
+Die Streamlit-Community-Cloud-Instanz läuft **absichtlich weiter** und schreibt
+in dieselbe Firestore-Datenbank. Sie ist bis auf Weiteres das Produktivsystem.
+
+### ⚠️ Warnung: `origin` zeigt auf das falsche Repo
+
+In diesem Arbeitsverzeichnis zeigt `origin` auf das **alte** Repo
+`stemplinger11-Streamlit/Shiftplanner`, und `main` verfolgt ausgerechnet
+`origin/main`. Das richtige Ziel ist `target`
+(`stemplinger11-Streamlit/WaWashiftplanner2.0`).
+
+**Ein bloßes `git push` schreibt also in die falsche Ablage.** Bis das Tracking
+umgestellt ist, gilt ausnahmslos:
+
+```bash
+git push target main
+```
+
+Umstellen ließe sich das mit `git branch -u target/main main` — bewusst noch
+nicht getan, weil es das Verhalten aller künftigen Pushes ändert.
+
+### 1. Zusammengeführten Stand pushen
+
+`main` enthält lokal fünf Commits zum Azure-Hosting (Entwurf, Plan,
+`core_secrets.py` mit Tests, `startup.sh`, Deployment-Workflow,
+Betriebsanleitung). Tests grün: 379 bestanden, 2 übersprungen, pyflakes sauber.
+**Der Push steht noch aus** — siehe Warnung oben.
+
+### 2. Automatische Auslieferung erstmals prüfen
+
+Nach dem Push läuft „Tests" auf `main`; war sie erfolgreich, zieht
+„Deploy nach Azure" nach. Zu prüfen ist beides:
+
+- Der Lauf endet mit `success` und der Schritt „Erreichbarkeit pruefen" meldet
+  HTTP 200.
+- Ein **roter** Test liefert **nicht** aus. Dafür auf einem Wegwerf-Branch
+  einen absichtlich fehlschlagenden Test einbauen, Pull Request öffnen, prüfen
+  dass „Deploy nach Azure" nicht startet, danach alles verwerfen.
+
+Die drei Repository-Variablen `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` und
+`AZURE_SUBSCRIPTION_ID` sind bereits hinterlegt.
+
+### 3. Repository auf privat stellen
+
+**Empfehlung: ja.** Beide Repos (`WaWashiftplanner2.0` und `Shiftplanner`) sind
+derzeit öffentlich.
+
+Akut gefährdet ist nichts: Im Repository liegen keine Zugangsdaten, und die drei
+Azure-Variablen sind Kennungen, keine Geheimnisse — ein Token bekommt nur ein
+Workflow-Lauf auf `refs/heads/main` genau dieses Repos, was ohne Schreibrechte
+niemand auslösen kann. Öffentlich einsehbar sind aber die Firestore-Projekt-
+kennung, die Admin- und Rollenlogik, die Azure-Ressourcennamen und künftig alle
+Workflow-Protokolle. Für den Dienstplan eines Vereins hat das keinen Nutzen.
+
+**⚠️ Vor dem Umstellen bedenken:** Streamlit Community Cloud braucht für private
+Repositories erweiterte GitHub-Rechte. Die parallel laufende alte Instanz kann
+stehenbleiben, bis der Zugriff neu erlaubt ist. Da sie noch das Produktivsystem
+ist: umstellen, **sofort** prüfen ob sie noch lädt, und die Rechte
+gegebenenfalls gleich nachziehen.
+
+### 4. Fachlicher Durchklick auf Azure
+
+Mit einem echten Konto anmelden, eine Schicht buchen, wieder stornieren,
+Rangliste mit Diagramm öffnen, ICS exportieren. Belegt ist bisher nur, dass die
+Anmeldemaske vollständig lädt — was immerhin beweist, dass die Firebase-
+Initialisierung mit den Zugangsdaten aus dem Key Vault durchläuft.
+
+Dabei die **Darstellung** prüfen: Beim Testaufruf wirkte das Anmeldeformular
+nach rechts über den Fensterrand hinausgeschoben. Das kann am schmalen
+Testfenster gelegen haben. Zum Vergleich dieselbe Seite auf Streamlit Community
+Cloud öffnen.
+
+### 5. Abschaltung der alten Instanz terminieren
+
+Noch offen und bewusst nicht entschieden. Solange beide laufen, schreiben zwei
+Anwendungen in dieselbe Firestore-Datenbank. Vor dem Abschalten festlegen, ab
+wann die Azure-Adresse die maßgebliche ist, und die Nutzer erst dann umleiten.
+
+### 6. Eigene Domain anbinden
+
+Sobald die extern bestellte Domain vorliegt. Vorgehen samt CNAME und
+`asuid`-TXT-Eintrag steht in `docs/BETRIEB-AZURE.md`, Abschnitt 5. Das
+verwaltete Zertifikat von Azure ist kostenlos.
 
 ---
 
