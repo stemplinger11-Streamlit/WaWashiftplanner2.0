@@ -1,0 +1,67 @@
+name: Deploy nach Azure
+
+# Nur nach gruenem Test ausliefern. Der Ladetest test_app_smoke.py prueft die
+# App gegen die echten Paketversionen und faengt genau die Paketbrueche ab,
+# die sonst erst in Azure auffallen.
+on:
+  workflow_run:
+    workflows: ["Tests"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # fuer die Anmeldung per OIDC
+  contents: read
+
+concurrency:
+  group: deploy-azure
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Bei rotem Test wird nicht ausgeliefert.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: An Azure anmelden
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Paket schnueren
+        # git archive statt eines Zips ueber das Arbeitsverzeichnis: es liefert
+        # den Inhalt aus dem Repository, also nur versionierte Dateien und mit
+        # LF-Zeilenenden. Eine oertliche secrets.toml koennte so gar nicht
+        # mitgehen, und startup.sh behaelt seine Shebang-Zeile.
+        run: git archive --format=zip -o app.zip HEAD
+
+      - name: Ausliefern
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: app-wawa-shiftplaner
+          package: app.zip
+
+      - name: Erreichbarkeit pruefen
+        # Der Kaltstart dauert rund 150 Sekunden, weil der Container neu
+        # gebaut und Streamlit hochgefahren wird. Deshalb grosszuegig warten.
+        run: |
+          for i in $(seq 1 24); do
+            code=$(curl -sS --max-time 20 -o /dev/null -w "%{http_code}" \
+              https://app-wawa-shiftplaner.azurewebsites.net/_stcore/health || true)
+            echo "Versuch $i: HTTP $code"
+            if [ "$code" = "200" ]; then
+              echo "Die App ist erreichbar."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Die App antwortet nach dem Deployment nicht mit 200." >&2
+          exit 1

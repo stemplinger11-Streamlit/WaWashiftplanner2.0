@@ -21,11 +21,14 @@ auf gemeinsamer Datenbasis.
 | `core_import.py` | Nutzerliste aus CSV einlesen |
 | `core_stats.py` | Rangliste, Saisonfilter, Verteilungen |
 | `core_reminders.py` | Auswahl der fälligen Erinnerungen |
+| `core_secrets.py` | Zugangsdaten aus der Umgebung als `secrets.toml` schreiben (Azure) |
+| `startup.sh` | Startbefehl der Azure Web App: Secrets schreiben, dann Streamlit |
 | `test_core_*.py` | Tests der fachlichen Regeln (ohne Firebase/Streamlit) |
 | `scripts/` | Sicherung und Wiederherstellung der Datenbank |
 | `TODO.md` | Befunde, offene Punkte, Projektrahmen |
 | `BACKUP.md` | Anleitung zur Datensicherung |
 | `DESIGN.md` | Designguide – verbindlich, durch Tests durchgesetzt |
+| `docs/BETRIEB-AZURE.md` | Betrieb auf Azure: Zugangsdaten, Tarif, Protokolle |
 
 Die fachlichen Regeln liegen bewusst außerhalb von `streamlit_app.py`, damit
 sie ohne laufende App und ohne Datenbankzugriff geprüft werden können.
@@ -44,6 +47,26 @@ cp .streamlit/secrets.toml.example .streamlit/secrets.toml
 # secrets.toml ausfüllen, dann:
 streamlit run streamlit_app.py
 ```
+
+## Betrieb auf Azure
+
+Die App läuft zusätzlich auf Azure App Service:
+
+| | |
+|---|---|
+| Adresse | https://app-wawa-shiftplaner.azurewebsites.net |
+| Tarif | Linux B1, eine Instanz, dauerhaft wach |
+| Kosten | rund 11,32 € im Monat |
+| Datenbank | unverändert Firestore – dieselbe wie Streamlit Community Cloud |
+
+Zugangsdaten liegen als base64-kodierte `secrets.toml` in einem Key Vault und
+werden beim Start von `core_secrets.py` als Datei geschrieben. Ein Push auf
+`main` liefert nach grünem Test automatisch aus.
+
+Einzelheiten – Zugangsdaten ändern, Tarif wechseln, Protokolle lesen, eigene
+Domain ergänzen – stehen in [`docs/BETRIEB-AZURE.md`](docs/BETRIEB-AZURE.md).
+
+---
 
 ## Tests
 
