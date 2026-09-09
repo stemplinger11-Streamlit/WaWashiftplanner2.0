@@ -1,0 +1,4 @@
+# Shell-Skripte muessen mit LF ausgecheckt werden, auch unter Windows.
+# startup.sh laeuft auf Azure App Service unter Linux - mit CRLF-Enden
+# scheitert dort bereits die Shebang-Zeile.
+*.sh text eol=lf
